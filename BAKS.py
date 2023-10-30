@@ -169,31 +169,79 @@ def optimize_alpha_MISE(Spikes, Time, nIter=100, alpha_start=1, alpha_end=10, al
     return df, best_alpha
 
 
-def optimize_alpha_MLE(Spikes, Time, alpha_start=1, alpha_end=10, alpha_step=0.1):
+def optimize_alpha_MLE(Spikes, Time, alpha_start=1, alpha_end=10, alpha_step=0.1, ndim=None):
+    # generate alphas to be optimized over
     alpha_range = np.arange(alpha_start, alpha_end, alpha_step)
+
     alphas = []
     loglikes = []
     FiringRates = []
+    bandwidths = []
 
-    SpikeTimes = extract_spike_times(Spikes, Time)
+    # determine if Spikes is a list of arrays or a single array
+    if ndim is None:
+        if isinstance(Spikes, pd.Series):
+            # determine if Spikes is a list of arrays or a single array
+            if isinstance(Spikes.iloc[0], np.ndarray):
+                ndim = 2
+            else:
+                ndim = 1
+        elif isinstance(Spikes, list):
+            # determine if Spikes is a list of arrays or a single array
+            if isinstance(Spikes[0], np.ndarray):
+                ndim = 2
+            else:
+                ndim = 1
+        elif isinstance(Spikes, np.ndarray):
+            ndim = Spikes.ndim
 
-    for a in alpha_range:
-        BAKSrate, h, = BAKS(SpikeTimes, Time, a)
-        ll = firingrate_loglike(Spikes, BAKSrate)
-        alphas.append(a)
-        loglikes.append(ll)
-        FiringRates.append(BAKSrate)
+    if ndim == 1:
+        SpikeTimes = extract_spike_times(Spikes, Time)
 
-    # make a pandas table with iternums, MISEs, and alphas
-    df = pd.DataFrame({'alpha': alphas, 'log_likelihood': loglikes})
-    # get alpha value with highest log likelihood
-    bestidx = df['log_likelihood'].idxmax()
-    best_alpha = df['alpha'].iloc[bestidx]
+        for a in alpha_range:
+            BAKSrate, h, = BAKS(SpikeTimes, Time, a)
+            ll = firingrate_loglike(Spikes, BAKSrate)
+            alphas.append(a)
+            loglikes.append(ll)
+            FiringRates.append(BAKSrate)
+            bandwidths.append(h)
 
-    # get the firing rate with the highest log likelihood
-    best_FiringRate = FiringRates[bestidx]
+        # make a pandas table with iternums, MISEs, and alphas
+        df = pd.DataFrame(
+            {'BAKSrate': FiringRates, 'bandwidth': bandwidths, 'log_likelihood': loglikes, 'alpha': alphas})
+        # get alpha value with highest log likelihood
+        bestidx = df['log_likelihood'].idxmax()
+        best_alpha = df['alpha'].iloc[bestidx]
 
-    return df, best_alpha, best_FiringRate
+        # get the firing rate with the highest log likelihood
+        best_FiringRate = FiringRates[bestidx]
+
+        return df, best_FiringRate, best_alpha
+
+    elif ndim == 2:
+        for spk, tm in zip(Spikes, Time):
+            spiketimes = extract_spike_times(spk, tm)
+            for a in alpha_range:
+                BAKSrate, h, = BAKS(spiketimes, tm, a)
+                ll = firingrate_loglike(spk, BAKSrate)
+                alphas.append(a)
+                loglikes.append(ll)
+                FiringRates.append(BAKSrate)
+                bandwidths.append(h)
+        # make a dataframe
+        df = pd.DataFrame(
+            {'BAKSrate': FiringRates, 'bandwidth': bandwidths, 'log_likelihood': loglikes, 'alpha': alphas})
+        # calculate average log-likelihood for each alpha, get the best alpha
+        best_alpha = df.groupby(['alpha'])['log_likelihood'].mean().idxmax()
+
+        # get rows from df where alpha == best_alpha
+        best_FiringRate = df[df['alpha'] == best_alpha]['BAKSrate']
+
+        return df, best_FiringRate
+
+    else:
+        print("Spikes is > 2 dimensions, only 1 and 2D arrays are supported")
+        return None
 
 
 def optimize_window_MLE(Spikes, Time, ws_start=0.1, ws_end=1, ws_step=0.1):
@@ -310,8 +358,31 @@ def parallel_apply(Spikes, Time, func, n_jobs=-1):
     results = Parallel(n_jobs=n_jobs)(delayed(func)(x, y) for x, y in zip(Spikes, Time))
     return pd.Series(results)
 
+def dfBAKS(df, spikes_col, time_col, idxcols=None, n_jobs=-1):
+    """
+    dfBAKS is used to apply BAKS to a pandas dataframe of spike trains
+    :param df: pandas dataframe
+    :param spikes_col: name of column containing spike trains
+    :param time_col: name of column containing time arrays
+    :param idxcols: list of column names to use as index for the output dataframe
+    :return: df: pandas dataframe with BAKSrate column added
+    """
+    df = df.copy()
 
-def autoBAKS(Spikes, Time):
+    results = Parallel(n_jobs=n_jobs)(delayed(optimize_alpha_MLE)(group[spikes_col], group[time_col]) for key, group in df.groupby(idxcols))
+    firingrates = []
+    alphas = []
+    for res_df, fr, best_alpha in results:
+        firingrates.append(fr)
+        alphas.append(best_alpha)
+
+    df['BAKSrate'] = pd.concat(firingrates)
+    df['alpha'] = pd.concat(alphas)
+
+    return df
+
+
+def autoBAKS(Spikes, Time, ndim=None, unit_index=None):
     """
     autoBAKS is used to automatically optimize BAKS parameter alpha and generate BAKS-smoothed firing rates
     for various types of input data. As long as Spikes and Time are the same data type and size and of a supported data
@@ -324,52 +395,60 @@ def autoBAKS(Spikes, Time):
     :return: BAKSrate: BAKS-smoothed firing rate
     """
 
-
     # detect if Spikes is a list of arrays, a series, or a single array
-    if isinstance(Spikes, list):
-        # detect is Spikes contains binary data. if not, raise error
-        if not np.all(np.isin(Spikes, [0, 1])):
-            raise ValueError("Spikes must be a binary array of spike emissions")
+    if unit_index is not None:
+        if ndim == 1:
+            raise ValueError("ndim must be 2 or None if unit_index is not None,"
+                             "since unit_index implies existence of multiple units")
 
-        print("Spikes is a list")
-        if isinstance(Spikes, list) and all(isinstance(item, np.ndarray) for item in Spikes):
-            print("Spikes is a list of arrays")
-            results = parallel_apply(Spikes, Time, optimize_alpha_MLE, n_jobs=-1)
-            _, _, BAKSrate = zip(*results)
-            print("warning, autoBAKS on a list of arrays is not yet well-tested.")
-            return BAKSrate
-        else:
-            print("Spikes is a list of non-arrays")
-            print("warning, autoBAKS on a list of non-arrays is not yet well-tested.")
-            df, best_alpha, BAKSrate = optimize_alpha_MLE(Spikes, Time)
-            return BAKSrate
+        df = pd.DataFrame({'Spikes': Spikes, 'Time': Time, 'unitID': unit_index})
+        df = dfBAKS(df, 'Spikes', 'Time', 'unitID')
+        return df['BAKSrate']
 
-    elif isinstance(Spikes, pd.Series):
-        print("Spikes is a pandas series")
-        # detect if series is a list of arrays or a single array
-        if isinstance(Spikes.iloc[0], np.ndarray):
-            print("Spikes is a series of arrays, parallelizing")
-            #check if Spikes has only 1s and 0s, if so, run getSpikeTimes
-            results = parallel_apply(Spikes, Time, optimize_alpha_MLE, n_jobs=-1)
-            _, _, BAKSrate = zip(*results)
-            return BAKSrate
+    elif ndim is None:
+        if isinstance(Spikes, list):
+            # detect is Spikes contains binary data. if not, raise error
+            if not np.all(np.isin(Spikes, [0, 1])):
+                raise ValueError("Spikes must be a binary array of spike emissions")
+
+            print("Spikes is a list")
+            if isinstance(Spikes, list) and all(isinstance(item, np.ndarray) for item in Spikes):
+                print("Spikes is a list of arrays")
+                print("warning, autoBAKS on a list of arrays is not yet well-tested.")
+                ndim = 2
+            else:
+                print("Spikes is a list of non-arrays")
+                print("warning, autoBAKS on a list of non-arrays is not yet well-tested.")
+                ndim = 1
+
+        elif isinstance(Spikes, pd.Series):
+            print("Spikes is a pandas series")
+            # detect if series is a list of arrays or a single array
+            if isinstance(Spikes.iloc[0], np.ndarray):
+                print("Spikes is a series of arrays, parallelizing")
+                ndim = 2
+            else:
+                ndim = 1
+        elif isinstance(Spikes, np.ndarray):
+            print("Spikes is an array")
+            if Spikes.ndim == 2:
+                print("Spikes is a 2D array, parallelizing")
+                print("warning, autoBAKS on a 2D array is not yet tested.")
+                ndim = 2
+            elif Spikes.ndim == 1:
+                print("Spikes is a 1D array")
+                ndim = 1
+            else:
+                print("Spikes is > 2 dimensions, only 1 and 2D arrays are supported")
+                return None
         else:
-            df, best_alpha, BAKSrate = optimize_alpha_MLE(Spikes, Time)
-            return BAKSrate
-    elif isinstance(Spikes, np.ndarray):
-        print("Spikes is an array")
-        if Spikes.ndim == 2:
-            print("Spikes is a 2D array, parallelizing")
-            results = parallel_apply(Spikes, Time, optimize_alpha_MLE, n_jobs=-1)
-            _, _, BAKSrate = zip(*results)
-            print("warning, autoBAKS on a 2D array is not yet tested.")
-            return BAKSrate
-        elif Spikes.ndim == 1:
-            print("Spikes is a 1D array")
-            df, best_alpha, BAKSrate = optimize_alpha_MLE(Spikes, Time)
-            return BAKSrate
-        else:
-            print("Spikes is > 2 dimensions, only 1 and 2D arrays are supported")
+            print("Spikes datatype not recognized. Please use a list, pandas series, or numpy array.")
             return None
-    else:
-        print("Spikes datatype not recognized. Please use a list, pandas series, or numpy array.")
+
+    if ndim == 1:
+        _, _, BAKSrate = optimize_alpha_MLE(Spikes, Time)
+        return BAKSrate
+    elif ndim == 2:
+        results = parallel_apply(Spikes, Time, optimize_alpha_MLE, n_jobs=-1)
+        _, _, BAKSrate = zip(*results)
+        return BAKSrate

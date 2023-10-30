@@ -1,15 +1,16 @@
 # pyBAKS: python implementation of Bayesian Adaptive Kernel Smoother (BAKS) for estimation of neuronal firing rate
 
-Daniel Svedberg, Brandeis University (2023)
+Daniel Svedberg <br> Brandeis University (2023)
 
-Based on: github.com/nurahmadi/BAKS/ by Nur Ahmadi, 2017
-
+Based on the following work by Nur Ahmadi: <br>
+github.com/nurahmadi/BAKS/ <br>
+github.com/nurahmadi/spike_bmi [spike_bmi.bmi.baks()]<br>
 Ahmadi, Nur, Timothy G. Constandinou, and Christos-Savvas Bouganis. "Estimation of neuronal firing rate using Bayesian Adaptive Kernel Smoother (BAKS)." Plos one 13.11 (2018): e0206794
 
 ## Introduction
-BAKS is a non-parametric method for estimating the firing rate of a neuron from a spike train. It is based on a Bayesian framework and uses an adaptive-width kernel to smooth the spike train. The method is described in detail in the paper above.
-
-pyBAKS is a python implementation of the original BAKS algorithm written by Nur Ahmadi, with added convenience functions for automatically handling various data structures, optimizing the alpha parameter, and parallel-processing of multiple spike arrays simultaneously. 
+BAKS is a method for estimating the firing rate of a neuron from a spike train. It is based on a Bayesian framework and uses an adaptive-width kernel to smooth the spike train. The method is described in detail in the paper cited above.<br>
+pyBAKS is a python implementation of the original BAKS algorithm written by Nur Ahmadi, with added convenience functions for automatically handling various data structures, optimizing the alpha parameter, and parallel-processing of multiple spike arrays simultaneously.<br>
+Also included in pyBAKS is the testing module pyBAKS.BAKS_test, which contains tests and demos for various functions in pyBAKS. 
 
 ## Installation & Loading
 As of October 26 2023, please install pyBAKS by cloning this repository. The package will be available on PyPI soon. 
@@ -20,7 +21,7 @@ import pyBAKS
 ## Usage
 
 ### Base functions
-The base/main function of pyBAKS is `pyBAKS.baks()`. It takes a vector of spiketimes, a corresponding time-index vector, and the alpha parameter as input, and returns a firing rate estimate, and the kernel bandwidth for each index: 
+The core function of pyBAKS is `pyBAKS.baks()`. It takes a vector of spiketimes, a corresponding time-index vector, and the alpha parameter as input, and returns a firing rate estimate, and the kernel bandwidth for each index: 
 ```python  
 import pyBAKS
 import numpy as np

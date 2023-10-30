@@ -1,43 +1,85 @@
 import BAKS
 import numpy as np
 import pandas as pd
-def generate_test_data():
-    # generate a 1000-bin time array with a dt of 0.001s--a 1-second recording
-    Time = np.arange(0, 5, 0.001)
-    dt = Time[1] - Time[0]
-    # generate a 1000-bin spike array with a spike probability that varies from 0 to 0.1, (between 0-100Hz), changing every 250 bins
-    rates = []
-    probs = []
-    for i in range(4):
-        rate = np.random.rand() * 70
-        prob = rate * dt
-        rates.append(rate)
-        probs.append(prob)
 
-    step = int(len(Time) / 4)
-    epochs = [[0, step], [step, step * 2], [step * 2, step * 3], [step * 3, step * 4]]
+def generate_trial(Time, rates):
+    dt = Time[1] - Time[0]
     Spikes = np.zeros(len(Time))
     Rates = np.zeros(len(Time))
-    for i in epochs:
-        spikes = np.random.rand(step) <= probs[epochs.index(i)]
-        Spikes[i[0]:i[1]] = spikes
-        epoch_rates = np.ones(step) * rates[epochs.index(i)]
-        Rates[i[0]:i[1]] = epoch_rates
+    step = int(len(Time) / len(rates))
+
+    for i in rates:
+        epoch_start = rates.index(i) * step
+        epoch_end = epoch_start + step
+        prob = i * dt
+        spikes = np.random.rand(step) <= prob
+        Spikes[epoch_start:epoch_end] = spikes
+        epoch_rates = np.ones(step) * i
+        Rates[epoch_start:epoch_end] = epoch_rates
 
     Spikes = Spikes.astype(int)
-    return Spikes, Rates, Time
+    return Spikes, Rates
 
-def generate_sim_df(nIter=30):
-    results = []
-    for i in range(nIter):
-        Spikes, Rates, Time = generate_test_data()
-        results.append({"unitID": i, "Spikes": Spikes, "Rates": Rates, "Time": Time})
+def sim_trials(n_trials=30, trial_length=5, n_epochs=4):
+    # generate a 5000-bin time array with a dt of 0.001s--a 5-second recording
+    Time = np.arange(0, trial_length, 0.001)
 
-    df = pd.DataFrame(results)
+    #generate a random firing rate (below 70hz) for each of n_epochs
+    rates = []
+    for i in range(n_epochs):
+        rate = np.random.rand() * 70
+        rates.append(rate)
+
+    #generate n-trials of spikes
+    Spike_list = []
+    Rate_list = []
+    Time_list = []
+    trial_id = []
+    for i in range(n_trials):
+        Spikes, Rates = generate_trial(Time, rates)
+        Spike_list.append(Spikes)
+        Rate_list.append(Rates)
+        Time_list.append(Time)
+        trial_id.append(i)
+
+    df = pd.DataFrame(data={"trial_id": trial_id, "Spikes": Spike_list, "Rates": Rate_list, "Time": Time_list})
+
     return df
 
+def sim_df(n_units=None, n_trials=None, trial_length=None, n_epochs=None):
+
+    if n_units is None:
+        n_units=10
+    if n_trials is None:
+        n_trials=30
+    if trial_length is None:
+        trial_length=5
+    if n_epochs is None:
+        n_epochs=4
+
+    results = []
+    for i in range(n_units):
+        unit_df = sim_trials(n_trials, trial_length, n_epochs)
+        unit_df['unitID'] = i
+        results.append(unit_df)
+
+    df = pd.concat(results)
+    return df
+
+def test_sim_df():
+    df = sim_df()
+    print(df.head())
+    test = df.loc[df['unitID'] == 0]
+    _, testfr = BAKS.optimize_alpha_MLE(test['Spikes'], test['Time'])
+
+    res = BAKS.dfBAKS(df, 'Spikes', 'Time', 'unitID')
+
+
 def test_sim_data():
-    Spikes, Rates, Time = generate_test_data()
+    df = sim_trials()
+    Spikes = df['Spikes'].tolist()
+    Rates = df['Rates'].tolist()
+    Time = df['Time'].tolist()
     # generate a rolling-window average of the test data for comparison
     winRate_MISE, _, _ = BAKS.get_optimized_rolling_rates_MISE(Spikes, Time, nIter=30)
     _, _, winRate_MLE = BAKS.optimize_window_MLE(Spikes, Time)
