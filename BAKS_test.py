@@ -76,19 +76,19 @@ def test_sim_df():
 
 
 def test_sim_data():
-    df = sim_trials()
-    Spikes = df['Spikes'].tolist()
-    Rates = df['Rates'].tolist()
-    Time = df['Time'].tolist()
+    df = sim_trials(n_trials=1)
+    Spikes = np.array(df['Spikes'].tolist()).flatten()
+    Rates = np.array(df['Rates'].tolist()).flatten()
+    Time = np.array(df['Time'].tolist()).flatten()
     # generate a rolling-window average of the test data for comparison
     winRate_MISE, _, _ = BAKS.get_optimized_rolling_rates_MISE(Spikes, Time, nIter=30)
     _, _, winRate_MLE = BAKS.optimize_window_MLE(Spikes, Time)
 
     BAKSrate_MISE, h, ba_MISE = BAKS.get_optimized_BAKSrates_MISE(Spikes, Time, nIter=30)
-    df, ba_MLE, BAKSrate_MLE = BAKS.optimize_alpha_MLE(Spikes, Time)
+    df, BAKSrate_MLE, ba_MLE = BAKS.optimize_alpha_MLE(Spikes, Time)
 
-    BAKS.plot_spike_train_vs_BAKS(Spikes, Rates, BAKSrate_MISE, winRate_MISE, Time)
-    BAKS.plot_spike_train_vs_BAKS(Spikes, Rates, BAKSrate_MLE, winRate_MLE, Time)
+    BAKS.plot_spike_train_vs_BAKS_vs_rolling(Spikes, Rates, BAKSrate_MISE, winRate_MISE.flatten(), Time)
+    BAKS.plot_spike_train_vs_BAKS_vs_rolling(Spikes, Rates, BAKSrate_MLE, winRate_MLE.flatten(), Time)
 
     win_MISE_MISE = BAKS.getMISE(Rates, winRate_MISE)
     win_MLE_MISE = BAKS.getMISE(Rates, winRate_MLE)
@@ -111,7 +111,7 @@ def test_sim_data():
 
 def test_autoBAKS():
     print("testing autoBAKS on simulated array of single-unit")
-    Spikes, Rates, Time = generate_test_data()
+    Spikes, Rates, Time = sim_trials()
     BAKSrate = BAKS.autoBAKS(Spikes, Time)
     if BAKSrate is None:
         print("autoBAKS failed to fit array")
@@ -119,7 +119,7 @@ def test_autoBAKS():
         print("autoBAKS array fit success")
 
     print("testing autoBAKS on simulated dataframe with multiple units")
-    df = generate_sim_df()
+    df = sim_trials()
     df['BAKSrate'] = BAKS.autoBAKS(df['Spikes'], df['Time'])
     if df['BAKSrate'].isnull().values.any():
         print("autoBAKS failed to fit all units")

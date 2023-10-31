@@ -48,16 +48,28 @@ def rolling_window(Spikes, dt, ws):
     :param ws: window size in seconds
     :return: winAvg: 1D array of the rolling window average of Spikes
     """
+
+    if Spikes.ndim == 1:
+        Spikes = Spikes.reshape(1, -1)
+
     window = ws / dt
-    window = window.astype(int)
-    winAvg = np.convolve(Spikes, np.ones(window) / window, 'same') / dt
+    window = int(window)
+    kernel = np.ones(window) / window
+
+    result = np.apply_along_axis(lambda x: np.convolve(x, kernel, mode='same'), axis=1, arr=Spikes)
+    winAvg = result/dt
 
     ll = firingrate_loglike(Spikes, winAvg)
     return winAvg, ll
 
 
 def firingrate_loglike(Spikes, FiringRate):
-    loglike = np.sum(np.log((FiringRate ** Spikes * np.exp(-FiringRate)) / factorial(Spikes)))
+    if Spikes.ndim == 2:
+        loglike = np.sum(np.log((FiringRate ** Spikes * np.exp(-FiringRate)) / factorial(Spikes)), axis=1)
+        if len(loglike) == 1:
+            loglike = loglike[0]
+    else:
+        loglike = np.sum(np.log((FiringRate ** Spikes * np.exp(-FiringRate)) / factorial(Spikes)))
     return loglike
 
 
@@ -104,19 +116,33 @@ def spikearray_poissonsim(Spikes, Time):
     :return sim_time: time array for sim_spikes
     """
 
-    n_time_bins = len(Time)
-    time_range = Time[-1] - Time[0]
+    if Spikes.ndim == 1:
+        Spikes = Spikes.reshape(1, -1)
+        Time = Time.reshape(1, -1)
+
+    n_time_bins = Spikes.shape[1]
+    time_range = Time[0,-1] - Time[0,0]
+
     dt = time_range / n_time_bins
 
-    sim_spikes = np.zeros(n_time_bins)
-    sim_rate = np.zeros(n_time_bins)
+    sim_spikes = np.zeros(Spikes.shape)
+    sim_rate = np.zeros(Spikes.shape)
+    step = int(n_time_bins / 4)
+    ntrls = Spikes.shape[0]
+
     for i in range(4):
-        start = np.random.randint(0, n_time_bins)
-        end = np.random.randint(start, n_time_bins)
-        slice = Spikes[start:end]
-        slicerate = np.sum(slice) / ((end - start) * dt)
-        sim_spikes[250 * i:250 * (i + 1)] = np.random.rand(250) < slicerate * dt
-        sim_rate[250 * i:250 * (i + 1)] = slicerate
+        samp = np.random.randint(0, n_time_bins, size=2)
+        start = np.min(samp)
+        end = np.max(samp)
+
+        slice = Spikes[:,start:end]
+        slicerate = np.sum(slice, axis=1) / ((end - start) * dt)
+        sliceprob = slicerate/n_time_bins
+        sliceprob = sliceprob.reshape(-1, 1)
+        slice_vals = np.random.rand(ntrls, step)
+        slice_spikes = slice_vals <= sliceprob
+        sim_spikes[:, step*i:step*(i+1)] = slice_spikes
+        sim_rate[:, step*i:step*(i+1)] = slicerate.reshape(-1, 1)
 
     sim_time = Time
     return sim_spikes, sim_rate, sim_time
@@ -139,7 +165,6 @@ def optimize_alpha_MISE(Spikes, Time, nIter=100, alpha_start=1, alpha_end=10, al
     :return: best_alpha: alpha value with lowest MISE
     """
 
-    dt = Time[1] - Time[0]
     alpha_range = np.arange(alpha_start, alpha_end, alpha_step)
     iternums = []
     MISEs = []
@@ -244,7 +269,7 @@ def optimize_alpha_MLE(Spikes, Time, alpha_start=1, alpha_end=10, alpha_step=0.1
         return None
 
 
-def optimize_window_MLE(Spikes, Time, ws_start=0.1, ws_end=1, ws_step=0.1):
+def optimize_window_MLE(Spikes, Time, ws_start=0.1, ws_end=5, ws_step=0.1):
     ws_range = np.arange(ws_start, ws_end, ws_step)
 
     dt = Time[1] - Time[0]
@@ -263,7 +288,7 @@ def optimize_window_MLE(Spikes, Time, ws_start=0.1, ws_end=1, ws_step=0.1):
     return df, best_window_size, best_FiringRate
 
 
-def optimize_window_MISE(Spikes, Time, nIter=100, ws_start=0.1, ws_end=1, ws_step=0.1):
+def optimize_window_MISE(Spikes, Time, nIter=100, ws_start=0.1, ws_end=None, ws_step=0.1):
     """
     optimize_alpha is used to optimize alpha for BAKS from a 1D array of real spiking data.
     it uses the real data to generate a simulated spike array with known rate,
@@ -280,12 +305,22 @@ def optimize_window_MISE(Spikes, Time, nIter=100, ws_start=0.1, ws_end=1, ws_ste
     :return: best_alpha: alpha value with lowest MISE
     """
 
-    dt = Time[1] - Time[0]
+    if Spikes.ndim == 1:
+        Spikes = Spikes.reshape(1, -1)
+        Time = Time.reshape(1, -1)
+
+    if ws_end is None:
+        ws_end = Time[0,-1] - Time[0,0]
+
+    dt = Time[0,1] - Time[0,0]
     window_range = np.arange(ws_start, ws_end, ws_step)
+
+
     iternums = []
     MISEs = []
     windows = []
     likelihoods = []
+
     for iter in range(nIter):
         sim_spikes, sim_rate, sim_time = spikearray_poissonsim(Spikes, Time)
         for ws in window_range:
@@ -319,7 +354,11 @@ def get_optimized_BAKSrates_MISE(Spikes, Time, nIter=10):
 
 def get_optimized_rolling_rates_MISE(Spikes, Time, nIter=10):
     df, best_window_size = optimize_window_MISE(Spikes, Time, nIter)
-    dt = Time[1] - Time[0]
+    if Spikes.ndim == 2:
+        dt = Time[0, 1] - Time[0, 0]
+    else:
+        dt = Time[1] - Time[0]
+
     winAvg, ll = rolling_window(Spikes, dt, best_window_size)
 
     return winAvg, ll, best_window_size
