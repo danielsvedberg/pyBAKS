@@ -57,7 +57,7 @@ def rolling_window(Spikes, dt, ws):
     kernel = np.ones(window) / window
 
     result = np.apply_along_axis(lambda x: np.convolve(x, kernel, mode='same'), axis=1, arr=Spikes)
-    winAvg = result/dt
+    winAvg = result / dt
 
     ll = firingrate_loglike(Spikes, winAvg)
     return winAvg, ll
@@ -121,7 +121,7 @@ def spikearray_poissonsim(Spikes, Time):
         Time = Time.reshape(1, -1)
 
     n_time_bins = Spikes.shape[1]
-    time_range = Time[0,-1] - Time[0,0]
+    time_range = Time[0, -1] - Time[0, 0]
 
     dt = time_range / n_time_bins
 
@@ -135,14 +135,14 @@ def spikearray_poissonsim(Spikes, Time):
         start = np.min(samp)
         end = np.max(samp)
 
-        slice = Spikes[:,start:end]
+        slice = Spikes[:, start:end]
         slicerate = np.sum(slice, axis=1) / ((end - start) * dt)
-        sliceprob = slicerate/n_time_bins
+        sliceprob = slicerate / n_time_bins
         sliceprob = sliceprob.reshape(-1, 1)
         slice_vals = np.random.rand(ntrls, step)
         slice_spikes = slice_vals <= sliceprob
-        sim_spikes[:, step*i:step*(i+1)] = slice_spikes
-        sim_rate[:, step*i:step*(i+1)] = slicerate.reshape(-1, 1)
+        sim_spikes[:, step * i:step * (i + 1)] = slice_spikes
+        sim_rate[:, step * i:step * (i + 1)] = slicerate.reshape(-1, 1)
 
     sim_time = Time
     return sim_spikes, sim_rate, sim_time
@@ -194,7 +194,7 @@ def optimize_alpha_MISE(Spikes, Time, nIter=100, alpha_start=1, alpha_end=10, al
     return df, best_alpha
 
 
-def optimize_alpha_MLE(Spikes, Time, alpha_start=1, alpha_end=10, alpha_step=0.1, ndim=None):
+def optimize_alpha_MLE(Spikes, Time, alpha_start=1, alpha_end=10, alpha_step=0.2, ndim=None, unitID=None):
     # generate alphas to be optimized over
     alpha_range = np.arange(alpha_start, alpha_end, alpha_step)
 
@@ -240,6 +240,8 @@ def optimize_alpha_MLE(Spikes, Time, alpha_start=1, alpha_end=10, alpha_step=0.1
 
         # get the firing rate with the highest log likelihood
         best_FiringRate = FiringRates[bestidx]
+        if unitID is not None:
+            df['unitID'] = unitID
 
         return df, best_FiringRate, best_alpha
 
@@ -261,8 +263,11 @@ def optimize_alpha_MLE(Spikes, Time, alpha_start=1, alpha_end=10, alpha_step=0.1
 
         # get rows from df where alpha == best_alpha
         best_FiringRate = df[df['alpha'] == best_alpha]['BAKSrate']
+        ba = df[df['alpha'] == best_alpha]['alpha']
+        if unitID is not None:
+            df['unitID'] = unitID
 
-        return df, best_FiringRate
+        return df, best_FiringRate, best_alpha
 
     else:
         print("Spikes is > 2 dimensions, only 1 and 2D arrays are supported")
@@ -310,11 +315,10 @@ def optimize_window_MISE(Spikes, Time, nIter=100, ws_start=0.1, ws_end=None, ws_
         Time = Time.reshape(1, -1)
 
     if ws_end is None:
-        ws_end = Time[0,-1] - Time[0,0]
+        ws_end = Time[0, -1] - Time[0, 0]
 
-    dt = Time[0,1] - Time[0,0]
+    dt = Time[0, 1] - Time[0, 0]
     window_range = np.arange(ws_start, ws_end, ws_step)
-
 
     iternums = []
     MISEs = []
@@ -397,6 +401,7 @@ def parallel_apply(Spikes, Time, func, n_jobs=-1):
     results = Parallel(n_jobs=n_jobs)(delayed(func)(x, y) for x, y in zip(Spikes, Time))
     return pd.Series(results)
 
+
 def dfBAKS(df, spikes_col, time_col, idxcols=None, n_jobs=-1):
     """
     dfBAKS is used to apply BAKS to a pandas dataframe of spike trains
@@ -406,19 +411,39 @@ def dfBAKS(df, spikes_col, time_col, idxcols=None, n_jobs=-1):
     :param idxcols: list of column names to use as index for the output dataframe
     :return: df: pandas dataframe with BAKSrate column added
     """
-    df = df.copy()
+    df = df.copy().reset_index(drop=True)
 
-    results = Parallel(n_jobs=n_jobs)(delayed(optimize_alpha_MLE)(group[spikes_col], group[time_col]) for key, group in df.groupby(idxcols))
-    firingrates = []
-    alphas = []
-    for res_df, fr, best_alpha in results:
-        firingrates.append(fr)
-        alphas.append(best_alpha)
+    if n_jobs == 0:
+        full_df = []
+        best_df = []
+        for key, group in df.groupby(idxcols):
+            res_df, fr, alpha = optimize_alpha_MLE(group[spikes_col], group[time_col])
+            full_df.append(res_df)
+            best_df.append(res_df.loc[res_df['alpha'] == alpha])
 
-    df['BAKSrate'] = pd.concat(firingrates)
-    df['alpha'] = pd.concat(alphas)
+        full_df = pd.concat(full_df).reset_index(drop=True)
+        best_df = pd.concat(best_df).reset_index(drop=True)
+        df[['BAKSrate', 'bandwidth', 'log_likelihood', 'alpha']] = best_df[
+            ['BAKSrate', 'bandwidth', 'log_likelihood', 'alpha']]
+    else:
+        results = Parallel(n_jobs=n_jobs)(
+            delayed(optimize_alpha_MLE)(group[spikes_col], group[time_col], unitID=key) for key, group in
+            df.groupby(idxcols))
 
-    return df
+        full_df = []
+        best_df = []
+        for res_df, fr, best_alpha in results:
+            print(best_alpha)
+            full_df.append(res_df)
+            best_df.append(res_df.loc[res_df['alpha'] == best_alpha])
+
+        full_df = pd.concat(full_df).reset_index(drop=True)
+        best_df = pd.concat(best_df).reset_index(drop=True)
+        df = df.reset_index(drop=True)
+        df[['BAKSrate','bandwidth','log_likelihood','alpha']] = best_df[['BAKSrate','bandwidth','log_likelihood','alpha']]
+        # retrieve the rows of full_df, where for each  alpha == best_alpha for each idxcol
+
+    return full_df, df
 
 
 def autoBAKS(Spikes, Time, ndim=None, unit_index=None):

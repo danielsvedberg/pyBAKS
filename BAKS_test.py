@@ -1,7 +1,8 @@
 import BAKS
 import numpy as np
 import pandas as pd
-
+import seaborn as sns
+import matplotlib.pyplot as plt
 def generate_trial(Time, rates):
     dt = Time[1] - Time[0]
     Spikes = np.zeros(len(Time))
@@ -67,14 +68,18 @@ def sim_df(n_units=None, n_trials=None, trial_length=None, n_epochs=None):
     return df
 
 def test_sim_df():
-    df = sim_df()
+    df = sim_df(n_trials=10,n_units=2)
     print(df.head())
     test = df.loc[df['unitID'] == 0]
-    _, testfr = BAKS.optimize_alpha_MLE(test['Spikes'], test['Time'])
+    testdf, testfr, testalpha = BAKS.optimize_alpha_MLE(test['Spikes'], test['Time'])
 
-    res = BAKS.dfBAKS(df, 'Spikes', 'Time', 'unitID')
+    full_res, best_res = BAKS.dfBAKS(df, 'Spikes', 'Time', 'unitID')
+    alpha_check = full_res.groupby(['alpha', 'unitID'], as_index=False)['log_likelihood'].mean()
+    ba_check = alpha_check.groupby('unitID')['log_likelihood'].idxmax()
+    ba_chec = alpha_check.loc[ba_check]
 
-
+    g = sns.relplot(x="alpha", y="log_likelihood", hue="unitID", data=full_res, kind="line")
+    plt.show()
 def test_sim_data():
     df = sim_trials(n_trials=1)
     Spikes = np.array(df['Spikes'].tolist()).flatten()
@@ -85,7 +90,7 @@ def test_sim_data():
     _, _, winRate_MLE = BAKS.optimize_window_MLE(Spikes, Time)
 
     BAKSrate_MISE, h, ba_MISE = BAKS.get_optimized_BAKSrates_MISE(Spikes, Time, nIter=30)
-    df, BAKSrate_MLE, ba_MLE = BAKS.optimize_alpha_MLE(Spikes, Time)
+    OAdf, BAKSrate_MLE, ba_MLE = BAKS.optimize_alpha_MLE(Spikes, Time)
 
     BAKS.plot_spike_train_vs_BAKS_vs_rolling(Spikes, Rates, BAKSrate_MISE, winRate_MISE.flatten(), Time)
     BAKS.plot_spike_train_vs_BAKS_vs_rolling(Spikes, Rates, BAKSrate_MLE, winRate_MLE.flatten(), Time)
