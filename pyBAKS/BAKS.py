@@ -194,7 +194,7 @@ def optimize_alpha_MISE(Spikes, Time, nIter=100, alpha_start=1, alpha_end=10, al
     return df, best_alpha
 
 
-def optimize_alpha_MLE(Spikes, Time, alpha_start=1, alpha_end=10, alpha_step=0.2, ndim=None, unitID=None):
+def optimize_alpha_MLE(Spikes, Time, alpha_start=1, alpha_end=10.1, alpha_step=0.1, ndim=None, unitID=None):
     # generate alphas to be optimized over
     alpha_range = np.arange(alpha_start, alpha_end, alpha_step)
 
@@ -263,7 +263,6 @@ def optimize_alpha_MLE(Spikes, Time, alpha_start=1, alpha_end=10, alpha_step=0.2
 
         # get rows from df where alpha == best_alpha
         best_FiringRate = df[df['alpha'] == best_alpha]['BAKSrate']
-        ba = df[df['alpha'] == best_alpha]['alpha']
         if unitID is not None:
             df['unitID'] = unitID
 
