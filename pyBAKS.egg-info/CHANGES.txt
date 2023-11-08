@@ -1,4 +1,13 @@
+v0.1.3 (2023-11-07)
+----------------------------
+-made some edits to optimize_alpha_MLE() to better handle different data types, especially numpy ndarrays
+
+v0.1.2 (2023-11-06)
+----------------------------
+-another debug for BAKS() function
+
 v0.1.1 (2023-11-06)
 ----------------------------
 -added dataframe processing
--debugging-
+-debugging
+-fixed bug where arrays with no spikes would cause in error in BAKS()

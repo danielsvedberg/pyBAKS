@@ -2,7 +2,7 @@ from setuptools import setup
 
 setup(
     name='pyBAKS',
-    version='0.1.0',
+    version='0.1.3',
     description='python implementation of Bayesian Adaptive Kernel Smoothing',
     author='Daniel Svedberg',
     author_email='dan.ake.svedberg@gmail.com',
