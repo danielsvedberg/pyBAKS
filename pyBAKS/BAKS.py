@@ -231,7 +231,7 @@ def parse_dims(Spikes):
         return ndim, kind
 
 
-def optimize_alpha_MLE(Spikes, Time, alpha_start=1, alpha_end=10.1, alpha_step=0.1, ndim=None, kind=None, unitID=None):
+def optimize_alpha_MLE(Spikes, Time, alpha_start=1, alpha_end=10.1, alpha_step=0.1, ndim=None, kind=None, unitID=None, output_df=True):
     # generate alphas to be optimized over
     alpha_range = np.arange(alpha_start, alpha_end, alpha_step)
     df = None
@@ -284,7 +284,7 @@ def optimize_alpha_MLE(Spikes, Time, alpha_start=1, alpha_end=10.1, alpha_step=0
 
         # make a dataframe
         df = pd.DataFrame(
-            {'BAKSrate': FiringRates, 'bandwidth': bandwidths, 'log_likelihood': loglikes, 'alpha': alphas})
+            {'BAKSrate': FiringRates, 'log_likelihood': loglikes, 'alpha': alphas})
         # calculate average log-likelihood for each alpha, get the best alpha
         best_alpha = df.groupby(['alpha'])['log_likelihood'].mean().idxmax()
 
@@ -303,7 +303,11 @@ def optimize_alpha_MLE(Spikes, Time, alpha_start=1, alpha_end=10.1, alpha_step=0
     else:
         raise ValueError("Spikes is not a list, array, or pandas series")
 
-    return df, best_FiringRate, best_alpha
+    if output_df:
+        return df, best_FiringRate, best_alpha
+    else:
+        del df
+        return best_FiringRate, best_alpha
 
 def optimize_window_MLE(Spikes, Time, ws_start=0.1, ws_end=5, ws_step=0.1):
     ws_range = np.arange(ws_start, ws_end, ws_step)

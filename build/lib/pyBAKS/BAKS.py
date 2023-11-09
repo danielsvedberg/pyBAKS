@@ -8,7 +8,8 @@ from joblib import Parallel, delayed
 
 
 def BAKS(SpikeTimes, Time, a, b=None):
-    if np.all(np.isin(SpikeTimes, [0, 1])):  # if SpikeTimes is a spike array, convert to spike times
+    if np.all(np.isin(SpikeTimes, [0, 1])) and len(
+            SpikeTimes) > 2:  # if SpikeTimes is a spike array, convert to spike times
         if len(SpikeTimes) == 0 or SpikeTimes is None:
             print("warning: SpikeTimes is empty, returning zero arrays")
             FiringRate = np.zeros(len(Time))
@@ -87,6 +88,7 @@ def extract_spike_times(Spikes, Time):
     :param Time: 1D time array same length as Spikes
     :return: SpikeTimes: 1D array of spike times
     """
+
     if len(Spikes) != len(Time):
         raise ValueError("Spike array and time array must have the same length.")
     spikeIdxs = np.where(Spikes == 1)
@@ -202,42 +204,62 @@ def optimize_alpha_MISE(Spikes, Time, nIter=100, alpha_start=1, alpha_end=10, al
     return df, best_alpha
 
 
-def optimize_alpha_MLE(Spikes, Time, alpha_start=1, alpha_end=10.1, alpha_step=0.1, ndim=None, unitID=None):
+def parse_dims(Spikes):
+    ndim = None
+    kind = None
+    if isinstance(Spikes, pd.Series):
+        kind = 'series'
+        # determine if Spikes is a list of arrays or a single array
+        if isinstance(Spikes.iloc[0], np.ndarray):
+            ndim = 2
+        else:
+            ndim = 1
+    elif isinstance(Spikes, list):
+        kind = 'list'
+        # determine if Spikes is a list of arrays or a single array
+        if isinstance(Spikes[0], np.ndarray):
+            ndim = 2
+        else:
+            ndim = 1
+    elif isinstance(Spikes, np.ndarray):
+        kind = 'numpy'
+        ndim = Spikes.ndim
+
+    if ndim is None or kind is None:
+        raise ValueError("Spikes is not a list, array, or pandas series")
+    else:
+        return ndim, kind
+
+
+def optimize_alpha_MLE(Spikes, Time, alpha_start=1, alpha_end=10.1, alpha_step=0.1, ndim=None, kind=None, unitID=None):
     # generate alphas to be optimized over
     alpha_range = np.arange(alpha_start, alpha_end, alpha_step)
-
+    df = None
+    best_alpha = None
+    best_FiringRate = None
     alphas = []
     loglikes = []
     FiringRates = []
     bandwidths = []
 
-    # determine if Spikes is a list of arrays or a single array
-    if ndim is None:
-        if isinstance(Spikes, pd.Series):
-            # determine if Spikes is a list of arrays or a single array
-            if isinstance(Spikes.iloc[0], np.ndarray):
-                ndim = 2
-            else:
-                ndim = 1
-        elif isinstance(Spikes, list):
-            # determine if Spikes is a list of arrays or a single array
-            if isinstance(Spikes[0], np.ndarray):
-                ndim = 2
-            else:
-                ndim = 1
-        elif isinstance(Spikes, np.ndarray):
-            ndim = Spikes.ndim
-
-    if ndim == 1:
-        SpikeTimes = extract_spike_times(Spikes, Time)
-
+    def get_BAKS():
+        spiketimes = extract_spike_times(spk, tm)
         for a in alpha_range:
-            BAKSrate, h, = BAKS(SpikeTimes, Time, a)
-            ll = firingrate_loglike(Spikes, BAKSrate)
+            BAKSrate, h, = BAKS(spiketimes, tm, a)
+            ll = firingrate_loglike(spk, BAKSrate)
             alphas.append(a)
             loglikes.append(ll)
             FiringRates.append(BAKSrate)
             bandwidths.append(h)
+
+    # determine if Spikes is a list of arrays or a single array
+    if ndim or kind is None:
+        ndim, kind = parse_dims(Spikes)
+
+    if ndim == 1:
+        spk = Spikes
+        tm = Time
+        get_BAKS()
 
         # make a pandas table with iternums, MISEs, and alphas
         df = pd.DataFrame(
@@ -251,18 +273,15 @@ def optimize_alpha_MLE(Spikes, Time, alpha_start=1, alpha_end=10.1, alpha_step=0
         if unitID is not None:
             df['unitID'] = unitID
 
-        return df, best_FiringRate, best_alpha
-
     elif ndim == 2:
-        for spk, tm in zip(Spikes, Time):
-            spiketimes = extract_spike_times(spk, tm)
-            for a in alpha_range:
-                BAKSrate, h, = BAKS(spiketimes, tm, a)
-                ll = firingrate_loglike(spk, BAKSrate)
-                alphas.append(a)
-                loglikes.append(ll)
-                FiringRates.append(BAKSrate)
-                bandwidths.append(h)
+        if len(Spikes) == len(Time):
+            for spk, tm in zip(Spikes, Time):
+                get_BAKS()
+        elif len(Spikes[0]) == len(Time):
+            tm = Time
+            for spk in Spikes:
+                get_BAKS()
+
         # make a dataframe
         df = pd.DataFrame(
             {'BAKSrate': FiringRates, 'bandwidth': bandwidths, 'log_likelihood': loglikes, 'alpha': alphas})
@@ -274,12 +293,17 @@ def optimize_alpha_MLE(Spikes, Time, alpha_start=1, alpha_end=10.1, alpha_step=0
         if unitID is not None:
             df['unitID'] = unitID
 
-        return df, best_FiringRate, best_alpha
-
+    if kind == 'numpy':
+        best_FiringRate = best_FiringRate.to_numpy()
+        best_FiringRate = np.vstack(best_FiringRate)
+    elif kind == 'list':
+        best_FiringRate = best_FiringRate.to_list()
+    elif kind == 'series':
+        action = "do nothing"
     else:
-        print("Spikes is > 2 dimensions, only 1 and 2D arrays are supported")
-        return None
+        raise ValueError("Spikes is not a list, array, or pandas series")
 
+    return df, best_FiringRate, best_alpha
 
 def optimize_window_MLE(Spikes, Time, ws_start=0.1, ws_end=5, ws_step=0.1):
     ws_range = np.arange(ws_start, ws_end, ws_step)
@@ -447,7 +471,8 @@ def dfBAKS(df, spikes_col, time_col, idxcols=None, n_jobs=-1):
         full_df = pd.concat(full_df).reset_index(drop=True)
         best_df = pd.concat(best_df).reset_index(drop=True)
         df = df.reset_index(drop=True)
-        df[['BAKSrate','bandwidth','log_likelihood','alpha']] = best_df[['BAKSrate','bandwidth','log_likelihood','alpha']]
+        df[['BAKSrate', 'bandwidth', 'log_likelihood', 'alpha']] = best_df[
+            ['BAKSrate', 'bandwidth', 'log_likelihood', 'alpha']]
         # retrieve the rows of full_df, where for each  alpha == best_alpha for each idxcol
 
     return full_df, df
