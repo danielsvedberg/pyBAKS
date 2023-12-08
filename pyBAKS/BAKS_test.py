@@ -69,6 +69,11 @@ def sim_df(n_units=None, n_trials=None, trial_length=None, n_epochs=None):
 
 def test_sim_df():
     df = sim_df(n_trials=10,n_units=2)
+    spikerep = df.Spikes.iloc[1]
+    n_time = len(spikerep)
+    zerotrial = np.zeros(n_time).astype('int')
+    df.Spikes.iloc[1] = zerotrial
+    
     print(df.head())
     test = df.loc[df['unitID'] == 0]
     testdf, testfr, testalpha = pyBAKS.optimize_alpha_MLE(test['Spikes'], test['Time'])
@@ -80,6 +85,7 @@ def test_sim_df():
 
     g = sns.relplot(x="alpha", y="log_likelihood", hue="unitID", data=full_res, kind="line")
     plt.show()
+    
 def test_sim_data():
     df = sim_trials(n_trials=1)
     Spikes = np.array(df['Spikes'].tolist()).flatten()

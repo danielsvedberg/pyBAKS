@@ -8,20 +8,19 @@ from joblib import Parallel, delayed
 
 
 def BAKS(SpikeTimes, Time, a, b=None):
-    if np.all(np.isin(SpikeTimes, [0, 1])) and len(
-            SpikeTimes) > 2:  # if SpikeTimes is a spike array, convert to spike times
-        if len(SpikeTimes) == 0 or SpikeTimes is None:
-            print("warning: SpikeTimes is empty, returning zero arrays")
-            FiringRate = np.zeros(len(Time))
-            h = np.zeros(len(Time))
-            return FiringRate, h
-        else:
-            print("SpikeTimes is a spike array, converting to spike times")
-            if len(SpikeTimes) != len(Time):
-                raise ValueError("Spike array and time array must have the same length.")
-            SpikeTimes = extract_spike_times(SpikeTimes, Time)
+    if SpikeTimes is None or len(SpikeTimes) == 0:
+        print("warning: SpikeTimes is empty, returning zero arrays")
+        FiringRate = np.zeros(len(Time))
+        h = np.zeros(len(Time))
+        return FiringRate, h
+    
+    if np.all(np.isin(SpikeTimes, [0, 1])) and len(SpikeTimes) > 2:  # if SpikeTimes is a spike array, convert to spike times
+        print("SpikeTimes is a spike array, converting to spike times")
+        if len(SpikeTimes) != len(Time):
+            raise ValueError("Spike array and time array must have the same length.")
+        SpikeTimes = extract_spike_times(SpikeTimes, Time)
 
-    if a < 1:
+    elif a < 1:
         raise ValueError("according to Ahmadi et al., alpha (a) must be >= 1")
 
     N = len(SpikeTimes)
@@ -91,10 +90,13 @@ def extract_spike_times(Spikes, Time):
 
     if len(Spikes) != len(Time):
         raise ValueError("Spike array and time array must have the same length.")
-    spikeIdxs = np.where(Spikes == 1)
-    SpikeTimes = Time[spikeIdxs]
-
-    return SpikeTimes
+        
+    if sum(Spikes) == 0:
+        return None
+    else:
+        spikeIdxs = np.where(Spikes == 1)
+        SpikeTimes = Time[spikeIdxs]
+        return SpikeTimes
 
 
 def getMISE(true_rate, est_rate):
@@ -284,7 +286,7 @@ def optimize_alpha_MLE(Spikes, Time, alpha_start=1, alpha_end=10.1, alpha_step=0
 
         # make a dataframe
         df = pd.DataFrame(
-            {'BAKSrate': FiringRates, 'log_likelihood': loglikes, 'alpha': alphas})
+            {'BAKSrate': FiringRates, 'bandwidth': bandwidths, 'log_likelihood': loglikes, 'alpha': alphas})
         # calculate average log-likelihood for each alpha, get the best alpha
         best_alpha = df.groupby(['alpha'])['log_likelihood'].mean().idxmax()
 
@@ -447,36 +449,33 @@ def dfBAKS(df, spikes_col, time_col, idxcols=None, n_jobs=-1):
     :return: df: pandas dataframe with BAKSrate column added
     """
     df = df.copy().reset_index(drop=True)
-
+    full_df = []
+    best_df = []
+    
     if n_jobs == 0:
-        full_df = []
-        best_df = []
+
         for key, group in df.groupby(idxcols):
             res_df, fr, alpha = optimize_alpha_MLE(group[spikes_col], group[time_col])
+            res_df[idxcols] = key
             full_df.append(res_df)
             best_df.append(res_df.loc[res_df['alpha'] == alpha])
 
-        full_df = pd.concat(full_df).reset_index(drop=True)
-        best_df = pd.concat(best_df).reset_index(drop=True)
-        df[['BAKSrate', 'bandwidth', 'log_likelihood', 'alpha']] = best_df[
-            ['BAKSrate', 'bandwidth', 'log_likelihood', 'alpha']]
     else:
         results = Parallel(n_jobs=n_jobs)(
             delayed(optimize_alpha_MLE)(group[spikes_col], group[time_col], unitID=key) for key, group in
             df.groupby(idxcols))
 
-        full_df = []
-        best_df = []
         for res_df, fr, best_alpha in results:
+            res_df[idxcols] = key
             print(best_alpha)
             full_df.append(res_df)
             best_df.append(res_df.loc[res_df['alpha'] == best_alpha])
 
-        full_df = pd.concat(full_df).reset_index(drop=True)
-        best_df = pd.concat(best_df).reset_index(drop=True)
-        df = df.reset_index(drop=True)
-        df[['BAKSrate', 'bandwidth', 'log_likelihood', 'alpha']] = best_df[
-            ['BAKSrate', 'bandwidth', 'log_likelihood', 'alpha']]
+    full_df = pd.concat(full_df).reset_index(drop=True)
+    best_df = pd.concat(best_df).reset_index(drop=True)
+    df = df.reset_index(drop=True)
+    df[['BAKSrate', 'bandwidth', 'log_likelihood', 'alpha']] = best_df[
+        ['BAKSrate', 'bandwidth', 'log_likelihood', 'alpha']]
         # retrieve the rows of full_df, where for each  alpha == best_alpha for each idxcol
 
     return full_df, df
