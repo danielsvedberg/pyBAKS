@@ -81,11 +81,11 @@ def test_sim_df():
     full_res, best_res = pyBAKS.dfBAKS(df, 'Spikes', 'Time', 'unitID')
     alpha_check = full_res.groupby(['alpha', 'unitID'], as_index=False)['log_likelihood'].mean()
     ba_check = alpha_check.groupby('unitID')['log_likelihood'].idxmax()
-    ba_chec = alpha_check.loc[ba_check]
+    ba_check = alpha_check.loc[ba_check]
 
     g = sns.relplot(x="alpha", y="log_likelihood", hue="unitID", data=full_res, kind="line")
     plt.show()
-    
+
 def test_sim_data():
     df = sim_trials(n_trials=1)
     Spikes = np.array(df['Spikes'].tolist()).flatten()

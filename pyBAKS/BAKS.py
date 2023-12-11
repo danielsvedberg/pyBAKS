@@ -81,12 +81,14 @@ def firingrate_loglike(Spikes, FiringRate):
     return loglike
 
 
-def extract_spike_times(Spikes, Time):
+def extract_spike_times(Spikes, Time, dt=0.001):
     """
     :param Spikes: 1D binary emissions array
     :param Time: 1D time array same length as Spikes
+    :param dt: time step--amount of time between each increment in time array
     :return: SpikeTimes: 1D array of spike times
     """
+    Time = Time*dt # convert to seconds
 
     if len(Spikes) != len(Time):
         raise ValueError("Spike array and time array must have the same length.")
@@ -233,7 +235,7 @@ def parse_dims(Spikes):
         return ndim, kind
 
 
-def optimize_alpha_MLE(Spikes, Time, alpha_start=1, alpha_end=10.1, alpha_step=0.1, ndim=None, kind=None, unitID=None, output_df=True):
+def optimize_alpha_MLE(Spikes, Time, alpha_start=1, alpha_end=10.1, alpha_step=0.1, dt=0.001, ndim=None, kind=None, unitID=None, output_df=True):
     # generate alphas to be optimized over
     alpha_range = np.arange(alpha_start, alpha_end, alpha_step)
     df = None
@@ -245,7 +247,7 @@ def optimize_alpha_MLE(Spikes, Time, alpha_start=1, alpha_end=10.1, alpha_step=0
     bandwidths = []
 
     def get_BAKS():
-        spiketimes = extract_spike_times(spk, tm)
+        spiketimes = extract_spike_times(spk, tm, dt)
         for a in alpha_range:
             BAKSrate, h, = BAKS(spiketimes, tm, a)
             ll = firingrate_loglike(spk, BAKSrate)
@@ -466,7 +468,7 @@ def dfBAKS(df, spikes_col, time_col, idxcols=None, n_jobs=-1):
             df.groupby(idxcols))
 
         for res_df, fr, best_alpha in results:
-            res_df[idxcols] = key
+            #res_df[idxcols] = key
             print(best_alpha)
             full_df.append(res_df)
             best_df.append(res_df.loc[res_df['alpha'] == best_alpha])
