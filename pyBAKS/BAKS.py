@@ -88,15 +88,21 @@ def extract_spike_times(Spikes, Time, dt=0.001):
     :param dt: time step--amount of time between each increment in time array
     :return: SpikeTimes: 1D array of spike times
     """
+
     Time = Time*dt # convert to seconds
 
-    if len(Spikes) != len(Time):
+    if type(Spikes) == list:
+        Spikes = np.array(Spikes)
+    if type(Time) == list:
+        Time = np.array(Time)
+    if Spikes.shape != Time.shape:
         raise ValueError("Spike array and time array must have the same length.")
         
-    if sum(Spikes) == 0:
+    if Spikes.sum() == 0:
         return None
+
     else:
-        spikeIdxs = np.where(Spikes == 1)
+        spikeIdxs = np.where(Spikes)
         SpikeTimes = Time[spikeIdxs]
         return SpikeTimes
 
@@ -111,7 +117,7 @@ def getMISE(true_rate, est_rate):
     :param est_rate: an array of the estimated rate
     :return MISE: mean integrated squared error between true rate and estimated rate
     """
-    nt = len(true_rate)
+    nt = true_rate.shape[1]
     MISE = np.sum((est_rate - true_rate) ** 2) / nt
     return MISE
 
@@ -298,8 +304,9 @@ def optimize_alpha_MLE(Spikes, Time, alpha_start=1, alpha_end=10.1, alpha_step=0
             df['unitID'] = unitID
 
     if kind == 'numpy':
-        best_FiringRate = best_FiringRate.to_numpy()
-        best_FiringRate = np.vstack(best_FiringRate)
+        if ndim > 1:
+            best_FiringRate = best_FiringRate.to_numpy()
+            best_FiringRate = np.vstack(best_FiringRate)
     elif kind == 'list':
         best_FiringRate = best_FiringRate.to_list()
     elif kind == 'series':
@@ -367,8 +374,7 @@ def optimize_window_MISE(Spikes, Time, nIter=100, ws_start=0.1, ws_end=None, ws_
     for iter in range(nIter):
         sim_spikes, sim_rate, sim_time = spikearray_poissonsim(Spikes, Time)
         for ws in window_range:
-            rolling_rate, _ = rolling_window(sim_spikes, dt, ws)
-            lh = firingrate_loglike(sim_spikes, rolling_rate)
+            rolling_rate, lh = rolling_window(sim_spikes, dt, ws)
             MISE = getMISE(sim_rate, rolling_rate)
             iternums.append(iter)
             MISEs.append(MISE)
