@@ -68,8 +68,7 @@ def rolling_window(Spikes, dt, ws):
     result = np.apply_along_axis(lambda x: np.convolve(x, kernel, mode='same'), axis=1, arr=Spikes)
     winAvg = result / dt
 
-    ll = firingrate_loglike(Spikes, winAvg)
-    return winAvg, ll
+    return winAvg
 
 
 def firingrate_loglike(Spikes, FiringRate):
