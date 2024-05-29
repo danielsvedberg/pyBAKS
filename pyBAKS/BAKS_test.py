@@ -23,9 +23,9 @@ def generate_trial(Time, rates):
     Spikes = Spikes.astype(int)
     return Spikes, Rates
 
-def sim_trials(n_trials=30, trial_length=5, n_epochs=4):
+def sim_trials(n_trials=30, trial_length=5, n_epochs=4, dt=0.001):
     # generate a 5000-bin time array with a dt of 0.001s--a 5-second recording
-    Time = np.arange(0, trial_length, 0.001)
+    Time = np.arange(0, trial_length, dt)
 
     #generate a random firing rate (below 70hz) for each of n_epochs
     rates = []
@@ -159,8 +159,6 @@ def test_sim_data():
     plt.title("True Rates vs MISE-Optimized pyBAKS")
     plt.legend()
     plt.show()
-
-    OAdf, BAKSrate_MLE, ba_MLE = pyBAKS.optimize_alpha_MLE(Spikes, Time)
 
     LL = OAdf['log_likelihood']
     alpha = OAdf['alpha']

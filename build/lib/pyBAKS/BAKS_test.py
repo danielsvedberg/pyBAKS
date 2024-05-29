@@ -3,6 +3,8 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
+from inspect import getsourcefile
+from os.path import abspath
 def generate_trial(Time, rates):
     dt = Time[1] - Time[0]
     Spikes = np.zeros(len(Time))
@@ -69,6 +71,11 @@ def sim_df(n_units=None, n_trials=None, trial_length=None, n_epochs=None):
 
 def test_sim_df():
     df = sim_df(n_trials=10,n_units=2)
+    spikerep = df.Spikes.iloc[1]
+    n_time = len(spikerep)
+    zerotrial = np.zeros(n_time).astype('int')
+    df.Spikes.iloc[1] = zerotrial
+    
     print(df.head())
     test = df.loc[df['unitID'] == 0]
     testdf, testfr, testalpha = pyBAKS.optimize_alpha_MLE(test['Spikes'], test['Time'])
@@ -76,21 +83,102 @@ def test_sim_df():
     full_res, best_res = pyBAKS.dfBAKS(df, 'Spikes', 'Time', 'unitID')
     alpha_check = full_res.groupby(['alpha', 'unitID'], as_index=False)['log_likelihood'].mean()
     ba_check = alpha_check.groupby('unitID')['log_likelihood'].idxmax()
-    ba_chec = alpha_check.loc[ba_check]
+    ba_check = alpha_check.loc[ba_check]
 
     g = sns.relplot(x="alpha", y="log_likelihood", hue="unitID", data=full_res, kind="line")
     plt.show()
+
 def test_sim_data():
-    df = sim_trials(n_trials=1)
+    #get the directory where the file is
+    path = abspath(getsourcefile(lambda: 0))
+    #get everything up to and including "pyBAKS"
+    path = path.split("pyBAKS")[0]
+    save_dir = path + "pyBAKS/"
+
+    df = sim_df(n_trials=1, n_units=1)
     Spikes = np.array(df['Spikes'].tolist()).flatten()
     Rates = np.array(df['Rates'].tolist()).flatten()
     Time = np.array(df['Time'].tolist()).flatten()
     # generate a rolling-window average of the test data for comparison
-    winRate_MISE, _, _ = pyBAKS.get_optimized_rolling_rates_MISE(Spikes, Time, nIter=30)
-    _, _, winRate_MLE = pyBAKS.optimize_window_MLE(Spikes, Time)
 
-    BAKSrate_MISE, h, ba_MISE = pyBAKS.get_optimized_BAKSrates_MISE(Spikes, Time, nIter=30)
+    #make a plot of spikes and rates for the simulated data
+    fig, axs = plt.subplots(1, 1, figsize=(10, 5))
+    axs.plot(Time, Spikes, label="Spikes", color= "black")
+    #set the y axis label to be spike
+    axs.set_ylabel("Spike")
+    #make a new axis for the rates
+    axs2 = axs.twinx()
+    axs2.plot(Time, Rates, label="Rates", color='red')
+    axs2.set_ylabel("Latent Rate", color='red')
+    #set the title of the plot
+    plt.title("Simulated Events and Latent Rates")
+    plt.savefig(save_dir + "simulated_data.png")
+    plt.show()
+
+
+    df, best_window_size = pyBAKS.optimize_window_MISE(Spikes, Time, 10)
+    #plot MISE vs window size
+    MISE = df['MISE']
+    window_size = df['window_size']
+    fig, axs = plt.subplots(1, 1, figsize=(7, 5))
+    sns.lineplot(x=window_size, y=MISE, ax=axs)
+    plt.title("Rolling Window: MISE vs Window Size (s)")
+    plt.savefig(save_dir + "rolling_window_MISE.png")
+    plt.show()
+
+    winRate_MISE, _, _ = pyBAKS.get_optimized_rolling_rates_MISE(Spikes, Time, nIter=30)
+
+    #plot winRate_Mise against the true rates
+    fig, axs = plt.subplots(1, 1, figsize=(10, 5))
+    axs.plot(Time, Rates, label="True Rates", color='red')
+    #reshape the winRate_MISE array to be the same shape as the Rates array
+    winRate_MISE = winRate_MISE.reshape(Rates.shape)
+    axs.plot(Time, winRate_MISE, label="MISE-Optimized Rolling Window", color='blue')
+    axs.set_ylabel("Rate")
+    plt.title("True Rates vs MISE-Optimized Rolling Window")
+    #add a legend
+    plt.legend()
+    plt.savefig(save_dir + "rolling_window_MISE_rates.png")
+    plt.show()
+
+    df, best_alpha = pyBAKS.optimize_alpha_MISE(Spikes, Time, 10)
+    #plot MISE vs alpha
+    MISE = df['MISE']
+    alpha = df['alpha']
+    fig, axs = plt.subplots(1, 1, figsize=(7, 5))
+    sns.lineplot(x=alpha, y=MISE, ax=axs)
+    plt.title("pyBAKS: MISE vs Alpha")
+    plt.savefig(save_dir + "pyBAKS_MISE.png")
+    plt.show()
+
+    BAKSrate_MISE, h, ba_MISE = pyBAKS.get_optimized_BAKSrates_MISE(Spikes, Time, nIter=10)
+    fig, axs = plt.subplots(1, 1, figsize=(10, 5))
+    axs.plot(Time, Rates, label="True Rates", color='red')
+    axs.plot(Time, BAKSrate_MISE, label="MISE-Optimized pyBAKS", color='blue')
+    axs.set_ylabel("Rate")
+    plt.title("True Rates vs MISE-Optimized pyBAKS")
+    plt.legend()
+    plt.show()
+
     OAdf, BAKSrate_MLE, ba_MLE = pyBAKS.optimize_alpha_MLE(Spikes, Time)
+
+    LL = OAdf['log_likelihood']
+    alpha = OAdf['alpha']
+    fig, axs = plt.subplots(1, 1, figsize=(7, 5))
+    sns.lineplot(x=alpha, y=LL, ax=axs)
+    plt.title("pyBAKS: Log Likelihood vs Alpha")
+    plt.savefig(save_dir + "pyBAKS_MLE.png")
+    plt.show()
+
+    fig, axs = plt.subplots(1, 1, figsize=(10, 5))
+    axs.plot(Time, Rates, label="True Rates", color='red')
+    axs.plot(Time, BAKSrate_MLE, label="MLE-Optimized pyBAKS", color='blue')
+    axs.set_ylabel("Rate")
+    plt.title("True Rates vs MLE-Optimized pyBAKS")
+    plt.legend()
+    plt.show()
+
+
 
     pyBAKS.plot_spike_train_vs_BAKS_vs_rolling(Spikes, Rates, BAKSrate_MISE, winRate_MISE.flatten(), Time)
     pyBAKS.plot_spike_train_vs_BAKS_vs_rolling(Spikes, Rates, BAKSrate_MLE, winRate_MLE.flatten(), Time)

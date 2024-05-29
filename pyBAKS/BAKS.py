@@ -75,11 +75,11 @@ def firingrate_loglike(Spikes, FiringRate):
     if Spikes.sum() == 0:
         raise ValueError("Spikes array is empty")
     if Spikes.ndim == 2:
-        loglike = np.sum(np.log((FiringRate ** Spikes * np.exp(-FiringRate))), axis=1)
+        loglike = np.sum(np.log((FiringRate ** Spikes * np.exp(-FiringRate))/factorial(Spikes.sum())), axis=1)
         if len(loglike) == 1:
             loglike = loglike.flatten()
     else:
-        loglike = np.sum(np.log((FiringRate ** Spikes * np.exp(-FiringRate))))
+        loglike = np.sum(np.log((FiringRate ** Spikes * np.exp(-FiringRate))/factorial(Spikes.sum())))
     return loglike
 
 
@@ -344,7 +344,8 @@ def optimize_window_MLE(Spikes, Time, ws_start=0.1, ws_end=5, ws_step=0.1):
     FiringRates = []
 
     for ws in ws_range:
-        winAvg, ll = rolling_window(Spikes, dt, ws)
+        winAvg = rolling_window(Spikes, dt, ws)
+        ll = firingrate_loglike(Spikes, winAvg)
         loglikes.append(ll)
         FiringRates.append(winAvg)
 
@@ -394,7 +395,8 @@ def optimize_window_MISE(Spikes, Time, nIter=100, ws_start=0.1, ws_end=None, ws_
         sim_time = sim_time.flatten()
 
         for ws in window_range:
-            rolling_rate, lh = rolling_window(sim_spikes, dt, ws)
+            rolling_rate = rolling_window(sim_spikes, dt, ws)
+            lh = firingrate_loglike(sim_spikes, rolling_rate)
             MISE = getMISE(sim_rate, rolling_rate, dt)
             iternums.append(iter)
             MISEs.append(MISE)
@@ -428,7 +430,8 @@ def get_optimized_rolling_rates_MISE(Spikes, Time, nIter=10):
     else:
         dt = Time[1] - Time[0]
 
-    winAvg, ll = rolling_window(Spikes, dt, best_window_size)
+    winAvg = rolling_window(Spikes, dt, best_window_size)
+    ll = firingrate_loglike(Spikes, winAvg)
 
     return winAvg, ll, best_window_size
 

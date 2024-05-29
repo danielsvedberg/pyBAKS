@@ -8,42 +8,42 @@ from joblib import Parallel, delayed
 
 
 def BAKS(SpikeTimes, Time, a, b=None):
-    if np.all(np.isin(SpikeTimes, [0, 1])) and len(
-            SpikeTimes) > 2:  # if SpikeTimes is a spike array, convert to spike times
-        if len(SpikeTimes) == 0 or SpikeTimes is None:
-            print("warning: SpikeTimes is empty, returning zero arrays")
-            FiringRate = np.zeros(len(Time))
-            h = np.zeros(len(Time))
-            return FiringRate, h
-        else:
-            print("SpikeTimes is a spike array, converting to spike times")
-            if len(SpikeTimes) != len(Time):
-                raise ValueError("Spike array and time array must have the same length.")
-            SpikeTimes = extract_spike_times(SpikeTimes, Time)
+    if SpikeTimes is None or len(SpikeTimes) == 0:
+        print("warning: SpikeTimes is empty, returning zero arrays")
+        FiringRate = np.zeros(len(Time))
+        h = np.zeros(len(Time))
+        return FiringRate, h
+    
+    if np.all(np.isin(SpikeTimes, [0, 1])) and len(SpikeTimes) > 2:  # if SpikeTimes is a spike array, convert to spike times
+        print("SpikeTimes is a spike array, converting to spike times")
+        if len(SpikeTimes) != len(Time):
+            raise ValueError("Spike array and time array must have the same length.")
+        SpikeTimes = extract_spike_times(SpikeTimes, Time)
 
-    if a < 1:
-        raise ValueError("according to Ahmadi et al., alpha (a) must be >= 1")
+    # elif a < 1:
+    #     raise ValueError("according to Ahmadi et al., alpha (a) must be >= 1")
 
     N = len(SpikeTimes)
-    sumnum = 0
-    sumdenum = 0
-
     if b is None:  # if b is not specified, use the default calculation from Ahmadi et al.
         b = N ** (4 / 5)
 
+    sumnum = 0
+    sumdenum = 0
+
     # calculate h (eq 11 in Ahmadi et al.)
     for i in range(N):
-        innerterm = ((((Time - SpikeTimes[i]) ** 2) / 2) + (1 / b))
-        numerator = innerterm ** (-a)
-        denumerator = innerterm ** (-a - 0.5)
+        numerator = (((Time - SpikeTimes[i]) ** 2) / 2 + 1 / b) ** (-a)
+        denumerator = (((Time - SpikeTimes[i]) ** 2) / 2 + 1 / b) ** (-a - 0.5)
         sumnum += numerator
         sumdenum += denumerator
-    h = (gamma(a) * sumnum) / (gamma(a + 0.5) * sumdenum)
+
+    h = (gamma(a)/gamma(a + 0.5)) * (sumnum / sumdenum)
 
     # calculate firing rate (eq 12 in Ahmadi et al.)
     FiringRate = np.zeros(len(Time))
     for j in range(N):
         K = (1 / (np.sqrt(2 * np.pi) * h)) * np.exp(-((Time - SpikeTimes[j]) ** 2) / (2 * h ** 2))
+
         FiringRate += K
 
     return FiringRate, h
@@ -68,17 +68,18 @@ def rolling_window(Spikes, dt, ws):
     result = np.apply_along_axis(lambda x: np.convolve(x, kernel, mode='same'), axis=1, arr=Spikes)
     winAvg = result / dt
 
-    ll = firingrate_loglike(Spikes, winAvg)
-    return winAvg, ll
+    return winAvg
 
 
 def firingrate_loglike(Spikes, FiringRate):
+    if Spikes.sum() == 0:
+        raise ValueError("Spikes array is empty")
     if Spikes.ndim == 2:
-        loglike = np.sum(np.log((FiringRate ** Spikes * np.exp(-FiringRate)) / factorial(Spikes)), axis=1)
+        loglike = np.sum(np.log((FiringRate ** Spikes * np.exp(-FiringRate))), axis=1)
         if len(loglike) == 1:
-            loglike = loglike[0]
+            loglike = loglike.flatten()
     else:
-        loglike = np.sum(np.log((FiringRate ** Spikes * np.exp(-FiringRate)) / factorial(Spikes)))
+        loglike = np.sum(np.log((FiringRate ** Spikes * np.exp(-FiringRate))))
     return loglike
 
 
@@ -86,18 +87,27 @@ def extract_spike_times(Spikes, Time):
     """
     :param Spikes: 1D binary emissions array
     :param Time: 1D time array same length as Spikes
+    :param dt: time step--amount of time between each increment in time array
     :return: SpikeTimes: 1D array of spike times
     """
 
-    if len(Spikes) != len(Time):
+    if type(Spikes) == list:
+        Spikes = np.array(Spikes)
+    if type(Time) == list:
+        Time = np.array(Time)
+    if Spikes.shape != Time.shape:
         raise ValueError("Spike array and time array must have the same length.")
-    spikeIdxs = np.where(Spikes == 1)
-    SpikeTimes = Time[spikeIdxs]
+        
+    if Spikes.sum() == 0:
+        return None
 
-    return SpikeTimes
+    else:
+        spikeIdxs = np.where(Spikes)
+        SpikeTimes = Time[spikeIdxs]
+        return SpikeTimes
 
 
-def getMISE(true_rate, est_rate):
+def getMISE(true_rate, est_rate, dt=0.001):
     """
     getMISE is used to calculate the mean integrated square error (MISE) between the true rate and estimated rate.
     to use this tool, you should first generate a simulated "known" rate array, then use that to generate
@@ -107,8 +117,18 @@ def getMISE(true_rate, est_rate):
     :param est_rate: an array of the estimated rate
     :return MISE: mean integrated squared error between true rate and estimated rate
     """
-    nt = len(true_rate)
-    MISE = np.sum((est_rate - true_rate) ** 2) / nt
+    # Ensure the arrays are numpy arrays
+    true_rate = np.array(true_rate)
+    est_rate = np.array(est_rate)
+
+    # Compute the squared errors
+    squared_errors = (true_rate - est_rate) ** 2
+
+    # Compute the mean of the squared errors
+    mean_squared_error = np.mean(squared_errors)
+
+    # Compute the MISE
+    MISE = dt * mean_squared_error
     return MISE
 
 
@@ -131,34 +151,32 @@ def spikearray_poissonsim(Spikes, Time):
         Time = Time.reshape(1, -1)
 
     n_time_bins = Spikes.shape[1]
-    time_range = Time[0, -1] - Time[0, 0]
 
-    dt = time_range / n_time_bins
-
+    dt = Time[0,1] - Time[0,0]
     sim_spikes = np.zeros(Spikes.shape)
     sim_rate = np.zeros(Spikes.shape)
-    step = int(n_time_bins / 4)
+    n_sim_bins = int(n_time_bins / 4)
     ntrls = Spikes.shape[0]
+
 
     for i in range(4):
         samp = np.random.randint(0, n_time_bins, size=2)
         start = np.min(samp)
         end = np.max(samp)
-
-        slice = Spikes[:, start:end]
-        slicerate = np.sum(slice, axis=1) / ((end - start) * dt)
-        sliceprob = slicerate / n_time_bins
-        sliceprob = sliceprob.reshape(-1, 1)
-        slice_vals = np.random.rand(ntrls, step)
-        slice_spikes = slice_vals <= sliceprob
-        sim_spikes[:, step * i:step * (i + 1)] = slice_spikes
-        sim_rate[:, step * i:step * (i + 1)] = slicerate.reshape(-1, 1)
+        nbins = end - start
+        arrslice = Spikes[:, start:end]
+        nspikes = arrslice.sum()
+        sliceprob = nspikes / nbins
+        slicerate = sliceprob / dt
+        slice_spikes = np.random.poisson(sliceprob, (ntrls, n_sim_bins))
+        sim_spikes[:, n_sim_bins * i:n_sim_bins * (i + 1)] = slice_spikes
+        sim_rate[:, n_sim_bins * i:n_sim_bins * (i + 1)] = slicerate.reshape(-1, 1)
 
     sim_time = Time
     return sim_spikes, sim_rate, sim_time
 
 
-def optimize_alpha_MISE(Spikes, Time, nIter=100, alpha_start=1, alpha_end=10, alpha_step=0.1):
+def optimize_alpha_MISE(Spikes, Time, nIter=100, alpha_start=0.01, alpha_end=4, alpha_step=0.01):
     """
     optimize_alpha is used to optimize alpha for BAKS from a 1D array of real spiking data.
     it uses the real data to generate a simulated spike array with known rate,
@@ -174,19 +192,27 @@ def optimize_alpha_MISE(Spikes, Time, nIter=100, alpha_start=1, alpha_end=10, al
     :return: df: pandas dataframe with iternums, MISEs, and alphas
     :return: best_alpha: alpha value with lowest MISE
     """
+    if Spikes.ndim == 2: # if Spikes is a 2D array, flatten it
+        Spikes = Spikes.flatten()
+        Time = Time.flatten()
+
+    dt = Time[1] - Time[0]
 
     alpha_range = np.arange(alpha_start, alpha_end, alpha_step)
     iternums = []
     MISEs = []
     alphas = []
     likelihoods = []
-    for iter in range(nIter):
+    for i in range(nIter):
         sim_spikes, sim_rate, sim_time = spikearray_poissonsim(Spikes, Time)
+        sim_spikes = sim_spikes.flatten()
+        sim_rate = sim_rate.flatten()
+        sim_time = sim_time.flatten()
         sim_spiketimes = extract_spike_times(sim_spikes, sim_time)
         for a in alpha_range:
-            BAKSrate, h, = BAKS(sim_spiketimes, Time, a)
+            BAKSrate, h, = BAKS(sim_spiketimes, sim_time, a)
             lh = firingrate_loglike(sim_spikes, BAKSrate)
-            MISE = getMISE(sim_rate, BAKSrate)
+            MISE = getMISE(sim_rate, BAKSrate, dt)
             iternums.append(iter)
             MISEs.append(MISE)
             alphas.append(a)
@@ -206,24 +232,24 @@ def optimize_alpha_MISE(Spikes, Time, nIter=100, alpha_start=1, alpha_end=10, al
 
 def parse_dims(Spikes):
     ndim = None
-    kind = None
-    if isinstance(Spikes, pd.Series):
-        kind = 'series'
+    kind = type(Spikes)
+
+    if kind == np.ndarray:
         # determine if Spikes is a list of arrays or a single array
-        if isinstance(Spikes.iloc[0], np.ndarray):
-            ndim = 2
-        else:
-            ndim = 1
-    elif isinstance(Spikes, list):
-        kind = 'list'
+        ndim = Spikes.ndim
+
+    elif kind == list:
         # determine if Spikes is a list of arrays or a single array
         if isinstance(Spikes[0], np.ndarray):
             ndim = 2
         else:
             ndim = 1
-    elif isinstance(Spikes, np.ndarray):
-        kind = 'numpy'
-        ndim = Spikes.ndim
+
+    elif kind == pd.core.series.Series:
+        if isinstance(Spikes.iloc[0], np.ndarray):
+            ndim = 2
+        else:
+            ndim = 1
 
     if ndim is None or kind is None:
         raise ValueError("Spikes is not a list, array, or pandas series")
@@ -231,7 +257,7 @@ def parse_dims(Spikes):
         return ndim, kind
 
 
-def optimize_alpha_MLE(Spikes, Time, alpha_start=1, alpha_end=10.1, alpha_step=0.1, ndim=None, kind=None, unitID=None):
+def optimize_alpha_MLE(Spikes, Time, alpha_start=0.01, alpha_end=5, alpha_step=0.01, dt=0.001, ndim=None, kind=None, unitID=None, output_df=True):
     # generate alphas to be optimized over
     alpha_range = np.arange(alpha_start, alpha_end, alpha_step)
     df = None
@@ -293,17 +319,22 @@ def optimize_alpha_MLE(Spikes, Time, alpha_start=1, alpha_end=10.1, alpha_step=0
         if unitID is not None:
             df['unitID'] = unitID
 
-    if kind == 'numpy':
-        best_FiringRate = best_FiringRate.to_numpy()
-        best_FiringRate = np.vstack(best_FiringRate)
-    elif kind == 'list':
+    if kind == np.ndarray:
+        if ndim > 1:
+            best_FiringRate = best_FiringRate.to_numpy()
+            best_FiringRate = np.vstack(best_FiringRate)
+    elif kind == list:
         best_FiringRate = best_FiringRate.to_list()
-    elif kind == 'series':
+    elif kind == pd.core.series.Series:
         action = "do nothing"
     else:
         raise ValueError("Spikes is not a list, array, or pandas series")
 
-    return df, best_FiringRate, best_alpha
+    if output_df:
+        return df, best_FiringRate, best_alpha
+    else:
+        del df
+        return best_FiringRate, best_alpha
 
 def optimize_window_MLE(Spikes, Time, ws_start=0.1, ws_end=5, ws_step=0.1):
     ws_range = np.arange(ws_start, ws_end, ws_step)
@@ -341,14 +372,14 @@ def optimize_window_MISE(Spikes, Time, nIter=100, ws_start=0.1, ws_end=None, ws_
     :return: best_alpha: alpha value with lowest MISE
     """
 
-    if Spikes.ndim == 1:
-        Spikes = Spikes.reshape(1, -1)
-        Time = Time.reshape(1, -1)
+    if Spikes.ndim == 2:
+        Spikes = Spikes.flatten()
+        Time = Time.flatten()
 
     if ws_end is None:
-        ws_end = Time[0, -1] - Time[0, 0]
+        ws_end = Time[-1] - Time[0]
 
-    dt = Time[0, 1] - Time[0, 0]
+    dt = Time[1] - Time[0]
     window_range = np.arange(ws_start, ws_end, ws_step)
 
     iternums = []
@@ -358,10 +389,13 @@ def optimize_window_MISE(Spikes, Time, nIter=100, ws_start=0.1, ws_end=None, ws_
 
     for iter in range(nIter):
         sim_spikes, sim_rate, sim_time = spikearray_poissonsim(Spikes, Time)
+        sim_spikes = sim_spikes.flatten()
+        sim_rate = sim_rate.flatten()
+        sim_time = sim_time.flatten()
+
         for ws in window_range:
-            rolling_rate, _ = rolling_window(sim_spikes, dt, ws)
-            lh = firingrate_loglike(sim_spikes, rolling_rate)
-            MISE = getMISE(sim_rate, rolling_rate)
+            rolling_rate, lh = rolling_window(sim_spikes, dt, ws)
+            MISE = getMISE(sim_rate, rolling_rate, dt)
             iternums.append(iter)
             MISEs.append(MISE)
             windows.append(ws)
@@ -443,36 +477,33 @@ def dfBAKS(df, spikes_col, time_col, idxcols=None, n_jobs=-1):
     :return: df: pandas dataframe with BAKSrate column added
     """
     df = df.copy().reset_index(drop=True)
-
+    full_df = []
+    best_df = []
+    
     if n_jobs == 0:
-        full_df = []
-        best_df = []
+
         for key, group in df.groupby(idxcols):
             res_df, fr, alpha = optimize_alpha_MLE(group[spikes_col], group[time_col])
+            res_df[idxcols] = key
             full_df.append(res_df)
             best_df.append(res_df.loc[res_df['alpha'] == alpha])
 
-        full_df = pd.concat(full_df).reset_index(drop=True)
-        best_df = pd.concat(best_df).reset_index(drop=True)
-        df[['BAKSrate', 'bandwidth', 'log_likelihood', 'alpha']] = best_df[
-            ['BAKSrate', 'bandwidth', 'log_likelihood', 'alpha']]
     else:
         results = Parallel(n_jobs=n_jobs)(
             delayed(optimize_alpha_MLE)(group[spikes_col], group[time_col], unitID=key) for key, group in
             df.groupby(idxcols))
 
-        full_df = []
-        best_df = []
         for res_df, fr, best_alpha in results:
+            #res_df[idxcols] = key
             print(best_alpha)
             full_df.append(res_df)
             best_df.append(res_df.loc[res_df['alpha'] == best_alpha])
 
-        full_df = pd.concat(full_df).reset_index(drop=True)
-        best_df = pd.concat(best_df).reset_index(drop=True)
-        df = df.reset_index(drop=True)
-        df[['BAKSrate', 'bandwidth', 'log_likelihood', 'alpha']] = best_df[
-            ['BAKSrate', 'bandwidth', 'log_likelihood', 'alpha']]
+    full_df = pd.concat(full_df).reset_index(drop=True)
+    best_df = pd.concat(best_df).reset_index(drop=True)
+    df = df.reset_index(drop=True)
+    df[['BAKSrate', 'bandwidth', 'log_likelihood', 'alpha']] = best_df[
+        ['BAKSrate', 'bandwidth', 'log_likelihood', 'alpha']]
         # retrieve the rows of full_df, where for each  alpha == best_alpha for each idxcol
 
     return full_df, df
