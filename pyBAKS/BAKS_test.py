@@ -109,7 +109,7 @@ def test_sim_data():
 
     winRate_MISE, _, _ = pyBAKS.get_optimized_rolling_rates_MISE(spikearr, timearr, nIter=30)
     rollingMISE = pyBAKS.getMISE(ratearr, winRate_MISE)
-    def plot_sim_vs_smooth(smootharr, flag):
+    def plot_sim_vs_smooth(smootharr, MISE, flag):
         #plot winRate_Mise against the true rates
         ntrials = ratearr.shape[0]
         fig, axs = plt.subplots(ntrials, 2, figsize=(10, ntrials*1.5), sharex=True)
@@ -132,13 +132,14 @@ def test_sim_data():
         ax[0].set_xlabel("Time (ms)")
 
         pltnm = "simulated data vs " + flag
-        fig.suptitle(pltnm)
+        title = pltnm + " MISE: " + str(MISE)
+        fig.suptitle(title)
         plt.tight_layout()
         plt.show()
         fig.savefig(save_dir + pltnm + ".png")
 
-    flag = 'rolling window smoothing, MISE: ' + str(rollingMISE)
-    plot_sim_vs_smooth(winRate_MISE, flag=flag)
+    flag = 'rolling window smoothing'
+    plot_sim_vs_smooth(winRate_MISE, MISE=rollingMISE, flag=flag)
 
     df, best_alpha = pyBAKS.optimize_alpha_MISE(spikearr, timearr, 10)
     #plot MISE vs alpha
@@ -156,5 +157,5 @@ def test_sim_data():
 
     BAKSrate_MISE, h, ba_MISE = pyBAKS.get_optimized_BAKSrates_MISE(spikearr, timearr, nIter=10)
     BAKSMISE = pyBAKS.getMISE(ratearr, BAKSrate_MISE)
-    flag = 'BAKS smoothing, MISE: ' + str(BAKSMISE)
-    plot_sim_vs_smooth(BAKSrate_MISE, flag=flag)
+    flag = 'BAKS smoothing'
+    plot_sim_vs_smooth(BAKSrate_MISE, MISE=BAKSMISE, flag=flag)
