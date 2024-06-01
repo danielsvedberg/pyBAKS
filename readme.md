@@ -64,3 +64,4 @@ BAKSrate_MISE, h, ba_MISE = pyBAKS.get_optimized_BAKSrates_MISE(spikearr, timear
 #h is the scale parameter
 #ba_MISE is the alpha value chosen by the algorithm
 ```
+![MISE versus alpha](https://github.com/danielsvedberg/pyBAKS/blob/1bd560727b41e47ec4c71c93cc3caf9dc99de0f2/simulated%20data%20vs%20BAKS%20smoothing%2C%20MISE%3A%200.14130345393072224.png)
