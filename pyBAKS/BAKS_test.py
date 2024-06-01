@@ -152,8 +152,9 @@ def test_sim_data():
     nm = "pyBAKS: MISE vs Alpha\nBest Alpha: "
     title = nm + str(best_alpha) + ", MISE: " + str(best_MISE)
     plt.title(title)
-    plt.show()
     plt.savefig(save_dir + "pyBAKS_MISE_vs_alpha.png")
+    plt.show()
+
 
     BAKSrate_MISE, h, ba_MISE = pyBAKS.get_optimized_BAKSrates_MISE(spikearr, timearr, nIter=10)
     BAKSMISE = pyBAKS.getMISE(ratearr, BAKSrate_MISE)

@@ -64,8 +64,8 @@ BAKSrate_MISE, h, ba_MISE = pyBAKS.get_optimized_BAKSrates_MISE(spikearr, timear
 #h is the scale parameter
 #ba_MISE is the alpha value chosen by the algorithm
 ```
-![MISE versus alpha](https://github.com/danielsvedberg/pyBAKS/blob/1bd560727b41e47ec4c71c93cc3caf9dc99de0f2/simulated%20data%20vs%20BAKS%20smoothing%2C%20MISE%3A%200.14130345393072224.png)
-
+![simulated data and rate estimation using BAKS](https://github.com/danielsvedberg/pyBAKS/blob/d790a7c23e1cf3cb1af4d873a1b42c8cea5305d2/simulated%20data%20vs%20BAKS%20smoothing.png)
+![MISE vs alpha]()
 ### Comparison with rolling-window smoothing
 A central premise of BAKS is that by virtue of its adaptive kernel, it can outperform a rolling-window smoother.
 To demonstrate this, the function `pyBAKS.get_optimized_rolling_rates_MISE()` is included, 
@@ -78,4 +78,5 @@ in the same way as is done for the BAKS algorithm:
 winRate_MISE, _, best_window_size = pyBAKS.get_optimized_rolling_rates_MISE(spikearr, timearr, nIter=30)
 # arguments are the same as in pyBAKS.get_optimized_BAKSrates_MISE()
 ```
-![MISE versus window size]()
+![simulated data and rate estimation using rolling window](https://github.com/danielsvedberg/pyBAKS/blob/master/simulated%20data%20vs%20rolling%20window%20smoothing.png)
+![Window size vs MISE](https://github.com/danielsvedberg/pyBAKS/blob/d790a7c23e1cf3cb1af4d873a1b42c8cea5305d2/rolling_window_MISE.png)
