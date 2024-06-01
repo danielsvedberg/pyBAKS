@@ -9,11 +9,15 @@ def generate_trial(Time, rates):
     dt = Time[1] - Time[0]
     Spikes = np.zeros(len(Time))
     Rates = np.zeros(len(Time))
-    step = int(len(Time) / len(rates))
+    steps = np.random.randint(0, len(Time), len(rates) - 1)
+    steps = np.append(steps, [0, len(Time)])
+    steps = np.sort(steps)
+    #step = int(len(Time) / len(rates))
 
-    for i in rates:
-        epoch_start = rates.index(i) * step
-        epoch_end = epoch_start + step
+    for idx, i in enumerate(rates):
+        epoch_start = steps[idx]
+        epoch_end = steps[idx + 1]
+        step = int(epoch_end - epoch_start)
         prob = i * dt
         spikes = np.random.rand(step) <= prob
         Spikes[epoch_start:epoch_end] = spikes
@@ -23,17 +27,16 @@ def generate_trial(Time, rates):
     Spikes = Spikes.astype(int)
     return Spikes, Rates
 
-def sim_trials(n_trials=30, trial_length=5, n_epochs=4, dt=0.001):
-    # generate a 5000-bin time array with a dt of 0.001s--a 5-second recording
+def sim_trial_array(n_trials=30, trial_length=5, n_epochs=4, dt=0.001):
     Time = np.arange(0, trial_length, dt)
 
-    #generate a random firing rate (below 70hz) for each of n_epochs
+    # generate a random firing rate (below 70hz) for each of n_epochs
     rates = []
     for i in range(n_epochs):
         rate = np.random.rand() * 70
         rates.append(rate)
 
-    #generate n-trials of spikes
+    # generate n-trials of spikes
     Spike_list = []
     Rate_list = []
     Time_list = []
@@ -44,9 +47,22 @@ def sim_trials(n_trials=30, trial_length=5, n_epochs=4, dt=0.001):
         Rate_list.append(Rates)
         Time_list.append(Time)
         trial_id.append(i)
+    #convert to numpy arrays
+    Spikes = np.array(Spike_list)
+    Rates = np.array(Rate_list)
+    Times = np.array(Time_list)
+    trialIDs = np.array(trial_id)
+    return Spikes, Rates, Times, trialIDs
 
+
+def sim_trial_df(n_trials=30, trial_length=5, n_epochs=4, dt=0.001):
+    # generate a 5000-bin time array with a dt of 0.001s--a 5-second recording
+    Spike_list, Rate_list, Time_list, trial_id = sim_trial_array(n_trials, trial_length, n_epochs, dt)
+    #convert Spike_list, Rate_list, and Time_list from trials x time to a list of time arrays
+    Spike_list = Spike_list.tolist()
+    Rate_list = Rate_list.tolist()
+    Time_list = Time_list.tolist()
     df = pd.DataFrame(data={"trial_id": trial_id, "Spikes": Spike_list, "Rates": Rate_list, "Time": Time_list})
-
     return df
 
 def sim_df(n_units=None, n_trials=None, trial_length=None, n_epochs=None):
@@ -62,31 +78,12 @@ def sim_df(n_units=None, n_trials=None, trial_length=None, n_epochs=None):
 
     results = []
     for i in range(n_units):
-        unit_df = sim_trials(n_trials, trial_length, n_epochs)
+        unit_df = sim_trial_df(n_trials, trial_length, n_epochs)
         unit_df['unitID'] = i
         results.append(unit_df)
 
     df = pd.concat(results)
     return df
-
-def test_sim_df():
-    df = sim_df(n_trials=10,n_units=2)
-    spikerep = df.Spikes.iloc[1]
-    n_time = len(spikerep)
-    zerotrial = np.zeros(n_time).astype('int')
-    df.Spikes.iloc[1] = zerotrial
-    
-    print(df.head())
-    test = df.loc[df['unitID'] == 0]
-    testdf, testfr, testalpha = pyBAKS.optimize_alpha_MLE(test['Spikes'], test['Time'])
-
-    full_res, best_res = pyBAKS.dfBAKS(df, 'Spikes', 'Time', 'unitID')
-    alpha_check = full_res.groupby(['alpha', 'unitID'], as_index=False)['log_likelihood'].mean()
-    ba_check = alpha_check.groupby('unitID')['log_likelihood'].idxmax()
-    ba_check = alpha_check.loc[ba_check]
-
-    g = sns.relplot(x="alpha", y="log_likelihood", hue="unitID", data=full_res, kind="line")
-    plt.show()
 
 def test_sim_data():
     #get the directory where the file is
@@ -94,149 +91,68 @@ def test_sim_data():
     #get everything up to and including "pyBAKS"
     path = path.split("pyBAKS")[0]
     save_dir = path + "pyBAKS/"
-
-    df = sim_df(n_trials=1, n_units=1)
-    Spikes = np.array(df['Spikes'].tolist()).flatten()
-    Rates = np.array(df['Rates'].tolist()).flatten()
-    Time = np.array(df['Time'].tolist()).flatten()
-    # generate a rolling-window average of the test data for comparison
-
-    #make a plot of spikes and rates for the simulated data
-    fig, axs = plt.subplots(1, 1, figsize=(10, 5))
-    axs.plot(Time, Spikes, label="Spikes", color= "black")
-    #set the y axis label to be spike
-    axs.set_ylabel("Spike")
-    #make a new axis for the rates
-    axs2 = axs.twinx()
-    axs2.plot(Time, Rates, label="Rates", color='red')
-    axs2.set_ylabel("Latent Rate", color='red')
-    #set the title of the plot
-    plt.title("Simulated Events and Latent Rates")
-    plt.savefig(save_dir + "simulated_data.png")
-    plt.show()
-
-
-    df, best_window_size = pyBAKS.optimize_window_MISE(Spikes, Time, 10)
+    ntrials = 5
+    spikearr, ratearr, timearr, trialarr = sim_trial_array(n_trials=ntrials, trial_length=5, n_epochs=4, dt=0.001)
+    # generate a rolling-window average of the test data as a baseline
+    df, best_window_size = pyBAKS.optimize_window_MISE(spikearr, timearr, 10)
     #plot MISE vs window size
     MISE = df['MISE']
+    best_MISE = df['MISE'].min()
     window_size = df['window_size']
-    fig, axs = plt.subplots(1, 1, figsize=(7, 5))
+    fig, axs = plt.subplots(1, 1, figsize=(6, 4))
     sns.lineplot(x=window_size, y=MISE, ax=axs)
-    plt.title("Rolling Window: MISE vs Window Size (s)")
+    axs.axvline(x=best_window_size, color='red', linestyle='--')
+    title = "Rolling Window: MISE vs Window Size (s)\nBest Window Size: " + str(best_window_size) + ", MISE: " + str(best_MISE)
+    plt.title(title)
     plt.savefig(save_dir + "rolling_window_MISE.png")
     plt.show()
 
-    winRate_MISE, _, _ = pyBAKS.get_optimized_rolling_rates_MISE(Spikes, Time, nIter=30)
+    winRate_MISE, _, _ = pyBAKS.get_optimized_rolling_rates_MISE(spikearr, timearr, nIter=30)
+    rollingMISE = pyBAKS.getMISE(ratearr, winRate_MISE)
+    def plot_sim_vs_smooth(smootharr, flag):
+        #plot winRate_Mise against the true rates
+        ntrials = ratearr.shape[0]
+        fig, axs = plt.subplots(ntrials, 2, figsize=(10, ntrials*1.5), sharex=True)
+        for i, ax in enumerate(axs):
+            if i == ntrials:
+                pass
+            else:
+                #plot the latent rate first:
+                ax[1].plot(timearr[i], ratearr[i], label="Latent Rate", color='red')
+                ax[1].plot(timearr[i], smootharr[i], label="Smoothed Rate", color='black')
+                ax[1].set_ylabel("Hz")
+                ax2 = ax[1].twinx()
+                ax2.set_ylabel("trial " + str(i))
+                ax2.set_yticks([])
+                ax[1].legend()
+                ax[0].plot(timearr[i], spikearr[i], color='Black')
+                ax[0].set_ylabel('spikes')
+        ax = axs[-1]
+        ax[1].set_xlabel("Time (ms)")
+        ax[0].set_xlabel("Time (ms)")
 
-    #plot winRate_Mise against the true rates
-    fig, axs = plt.subplots(1, 1, figsize=(10, 5))
-    axs.plot(Time, Rates, label="True Rates", color='red')
-    #reshape the winRate_MISE array to be the same shape as the Rates array
-    winRate_MISE = winRate_MISE.reshape(Rates.shape)
-    axs.plot(Time, winRate_MISE, label="MISE-Optimized Rolling Window", color='blue')
-    axs.set_ylabel("Rate")
-    plt.title("True Rates vs MISE-Optimized Rolling Window")
-    #add a legend
-    plt.legend()
-    plt.savefig(save_dir + "rolling_window_MISE_rates.png")
-    plt.show()
+        pltnm = "simulated data vs " + flag
+        fig.suptitle(pltnm)
+        plt.tight_layout()
+        plt.show()
+        fig.savefig(save_dir + pltnm + ".png")
 
-    df, best_alpha = pyBAKS.optimize_alpha_MISE(Spikes, Time, 10)
+    flag = 'rolling window smoothing, MISE: ' + str(rollingMISE)
+    plot_sim_vs_smooth(winRate_MISE, flag=flag)
+
+    df, best_alpha = pyBAKS.optimize_alpha_MISE(spikearr, timearr, 10)
     #plot MISE vs alpha
     MISE = df['MISE']
+    best_MISE = df['MISE'].min()
     alpha = df['alpha']
-    fig, axs = plt.subplots(1, 1, figsize=(7, 5))
+    fig, axs = plt.subplots(1, 1, figsize=(6, 4))
     sns.lineplot(x=alpha, y=MISE, ax=axs)
-    plt.title("pyBAKS: MISE vs Alpha")
-    plt.savefig(save_dir + "pyBAKS_MISE.png")
+    axs.axvline(x=best_alpha, color='red', linestyle='--')
+    title = "pyBAKS: MISE vs Alpha\nBest Alpha: " + str(best_alpha) + ", MISE: " + str(best_MISE)
+    plt.title(title)
     plt.show()
 
-    BAKSrate_MISE, h, ba_MISE = pyBAKS.get_optimized_BAKSrates_MISE(Spikes, Time, nIter=10)
-    fig, axs = plt.subplots(1, 1, figsize=(10, 5))
-    axs.plot(Time, Rates, label="True Rates", color='red')
-    axs.plot(Time, BAKSrate_MISE, label="MISE-Optimized pyBAKS", color='blue')
-    axs.set_ylabel("Rate")
-    plt.title("True Rates vs MISE-Optimized pyBAKS")
-    plt.legend()
-    plt.show()
-
-    LL = OAdf['log_likelihood']
-    alpha = OAdf['alpha']
-    fig, axs = plt.subplots(1, 1, figsize=(7, 5))
-    sns.lineplot(x=alpha, y=LL, ax=axs)
-    plt.title("pyBAKS: Log Likelihood vs Alpha")
-    plt.savefig(save_dir + "pyBAKS_MLE.png")
-    plt.show()
-
-    fig, axs = plt.subplots(1, 1, figsize=(10, 5))
-    axs.plot(Time, Rates, label="True Rates", color='red')
-    axs.plot(Time, BAKSrate_MLE, label="MLE-Optimized pyBAKS", color='blue')
-    axs.set_ylabel("Rate")
-    plt.title("True Rates vs MLE-Optimized pyBAKS")
-    plt.legend()
-    plt.show()
-
-
-
-    pyBAKS.plot_spike_train_vs_BAKS_vs_rolling(Spikes, Rates, BAKSrate_MISE, winRate_MISE.flatten(), Time)
-    pyBAKS.plot_spike_train_vs_BAKS_vs_rolling(Spikes, Rates, BAKSrate_MLE, winRate_MLE.flatten(), Time)
-
-    win_MISE_MISE = pyBAKS.getMISE(Rates, winRate_MISE)
-    win_MLE_MISE = pyBAKS.getMISE(Rates, winRate_MLE)
-    BAKS_MISE_MISE = pyBAKS.getMISE(Rates, BAKSrate_MISE)
-    BAKS_MLE_MISE = pyBAKS.getMISE(Rates, BAKSrate_MLE)
-
-    win_MISE_LL = pyBAKS.firingrate_loglike(Spikes, winRate_MISE)
-    win_MLE_LL = pyBAKS.firingrate_loglike(Spikes, winRate_MLE)
-    BAKS_MISE_LL = pyBAKS.firingrate_loglike(Spikes, BAKSrate_MISE)
-    BAKS_MLE_LL = pyBAKS.firingrate_loglike(Rates, BAKSrate_MLE)
-
-    #make a pandas dataframe of the results
-    smoothingtype = ["rolling_window", "rolling_window", "pyBAKS", "pyBAKS"]
-    optimizationtype = ["sim_MISE", "MLE", "sim_MISE", "MLE"]
-    MISEs = [win_MISE_MISE, win_MLE_MISE, BAKS_MISE_MISE, BAKS_MLE_MISE]
-    LLs = [win_MISE_LL, win_MLE_LL, BAKS_MISE_LL, BAKS_MLE_LL]
-
-    df = pd.DataFrame(data={"smoothing_method": smoothingtype, "optimization_method": optimizationtype, "MISE": MISEs, "log_likelihood": LLs})
-    print(df)
-
-def test_autoBAKS():
-    print("testing autoBAKS on simulated array of single-unit")
-    Spikes, Rates, Time = sim_trials()
-    BAKSrate = pyBAKS.autoBAKS(Spikes, Time)
-    if BAKSrate is None:
-        print("autoBAKS failed to fit array")
-    else:
-        print("autoBAKS array fit success")
-
-    print("testing autoBAKS on simulated dataframe with multiple units")
-    df = sim_trials()
-    df['BAKSrate'] = pyBAKS.autoBAKS(df['Spikes'], df['Time'])
-    if df['BAKSrate'].isnull().values.any():
-        print("autoBAKS failed to fit all units")
-    else:
-        print("autoBAKS dataframe fit success")
-
-    print("testing autoBAKS on simulated list of numpy arrays for multiple units")
-    Spikes = df['Spikes'].tolist()
-    Time = df['Time'].tolist()
-    BAKSrate = pyBAKS.autoBAKS(Spikes, Time)
-    if BAKSrate is None:
-        print("autoBAKS failed list of numpy arrays test")
-    else:
-        print("autoBAKS list of numpy arrays test success")
-
-    print("testing autoBAKS on simulated 2D numpy array for multiple units")
-    Spikes = np.array(df['Spikes'].tolist())
-    Time = np.array(df['Time'].tolist())
-    BAKSrate = pyBAKS.autoBAKS(Spikes, Time)
-    if BAKSrate is None:
-        print("autoBAKS failed 2D numpy array test")
-    else:
-        print("autoBAKS 2D numpy array test success")
-
-
-
-
-
-
+    BAKSrate_MISE, h, ba_MISE = pyBAKS.get_optimized_BAKSrates_MISE(spikearr, timearr, nIter=10)
+    BAKSMISE = pyBAKS.getMISE(ratearr, BAKSrate_MISE)
+    flag = 'BAKS smoothing, MISE: ' + str(BAKSMISE)
+    plot_sim_vs_smooth(BAKSrate_MISE, flag=flag)

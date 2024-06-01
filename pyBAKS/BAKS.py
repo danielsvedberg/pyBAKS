@@ -5,6 +5,7 @@ from scipy.special import factorial
 import pandas as pd
 import seaborn as sns
 from joblib import Parallel, delayed
+import random
 
 
 def BAKS(SpikeTimes, Time, a, b=None):
@@ -145,7 +146,6 @@ def spikearray_poissonsim(Spikes, Time):
             the 3rd quarter is the rate, and the 4th quarter is 2x the rate
     :return sim_time: time array for sim_spikes
     """
-
     if Spikes.ndim == 1:
         Spikes = Spikes.reshape(1, -1)
         Time = Time.reshape(1, -1)
@@ -153,30 +153,32 @@ def spikearray_poissonsim(Spikes, Time):
     n_time_bins = Spikes.shape[1]
 
     dt = Time[0,1] - Time[0,0]
-    sim_spikes = np.zeros(Spikes.shape)
-    sim_rate = np.zeros(Spikes.shape)
+    sim_spikes = []
+    sim_rate = []
     n_sim_bins = int(n_time_bins / 4)
     ntrls = Spikes.shape[0]
-
-
-    for i in range(4):
-        samp = np.random.randint(0, n_time_bins, size=2)
-        start = np.min(samp)
-        end = np.max(samp)
-        nbins = end - start
-        arrslice = Spikes[:, start:end]
-        nspikes = arrslice.sum()
-        sliceprob = nspikes / nbins
-        slicerate = sliceprob / dt
-        slice_spikes = np.random.poisson(sliceprob, (ntrls, n_sim_bins))
-        sim_spikes[:, n_sim_bins * i:n_sim_bins * (i + 1)] = slice_spikes
-        sim_rate[:, n_sim_bins * i:n_sim_bins * (i + 1)] = slicerate.reshape(-1, 1)
-
+    max_mods = n_time_bins/500
+    for b in Spikes:
+        b = b.copy()
+        #reshuffle Spikes
+        np.random.shuffle(b)
+        nmods = np.random.randint(max_mods)
+        a = np.random.randint(0, n_time_bins, size=nmods)
+        a = np.append(a, [0, n_time_bins])
+        a.sort()
+        averages = [np.mean(b[a[i]:a[i + 1]]) for i in range(len(a) - 1)]
+        # Create an array with these averages repeated for the corresponding sections
+        result = np.concatenate([np.full(a[i + 1] - a[i], averages[i]) for i in range(len(a) - 1)])
+        result = result/dt
+        sim_spikes.append(b)
+        sim_rate.append(result)
+    sim_spikes = np.vstack(sim_spikes)
+    sim_rate = np.vstack(sim_rate)
     sim_time = Time
     return sim_spikes, sim_rate, sim_time
 
 
-def optimize_alpha_MISE(Spikes, Time, nIter=100, alpha_start=0.01, alpha_end=4, alpha_step=0.01):
+def optimize_alpha_MISE(Spikes, Time, nIter=100, alpha_start=0.01, alpha_end=4, alpha_step=0.1):
     """
     optimize_alpha is used to optimize alpha for BAKS from a 1D array of real spiking data.
     it uses the real data to generate a simulated spike array with known rate,
@@ -192,11 +194,11 @@ def optimize_alpha_MISE(Spikes, Time, nIter=100, alpha_start=0.01, alpha_end=4, 
     :return: df: pandas dataframe with iternums, MISEs, and alphas
     :return: best_alpha: alpha value with lowest MISE
     """
-    if Spikes.ndim == 2: # if Spikes is a 2D array, flatten it
-        Spikes = Spikes.flatten()
-        Time = Time.flatten()
+    # if Spikes.ndim == 2: # if Spikes is a 2D array, flatten it
+    #     Spikes = Spikes.flatten()
+    #     Time = Time.flatten()
 
-    dt = Time[1] - Time[0]
+    dt = Time[0,1] - Time[0,0]
 
     alpha_range = np.arange(alpha_start, alpha_end, alpha_step)
     iternums = []
@@ -205,18 +207,18 @@ def optimize_alpha_MISE(Spikes, Time, nIter=100, alpha_start=0.01, alpha_end=4, 
     likelihoods = []
     for i in range(nIter):
         sim_spikes, sim_rate, sim_time = spikearray_poissonsim(Spikes, Time)
-        sim_spikes = sim_spikes.flatten()
-        sim_rate = sim_rate.flatten()
-        sim_time = sim_time.flatten()
-        sim_spiketimes = extract_spike_times(sim_spikes, sim_time)
-        for a in alpha_range:
-            BAKSrate, h, = BAKS(sim_spiketimes, sim_time, a)
-            lh = firingrate_loglike(sim_spikes, BAKSrate)
-            MISE = getMISE(sim_rate, BAKSrate, dt)
-            iternums.append(iter)
-            MISEs.append(MISE)
-            alphas.append(a)
-            likelihoods.append(lh)
+        for j, ss in enumerate(sim_spikes):
+            st = sim_time[j,:]
+            sr = sim_rate[j,:]
+            sim_spiketimes = extract_spike_times(ss, st)
+            for a in alpha_range:
+                BAKSrate, h, = BAKS(sim_spiketimes, st, a)
+                lh = 0#firingrate_loglike(sim_spikes, BAKSrate)
+                MISE = getMISE(sr, BAKSrate, dt)
+                iternums.append(i)
+                MISEs.append(MISE)
+                alphas.append(a)
+                likelihoods.append(lh)
 
     # make a pandas table with iternums, MISEs, and alphas
     df = pd.DataFrame({'iteration': iternums, 'MISE': MISEs, 'alpha': alphas, 'likelihood': likelihoods})
@@ -257,7 +259,146 @@ def parse_dims(Spikes):
         return ndim, kind
 
 
-def optimize_alpha_MLE(Spikes, Time, alpha_start=0.01, alpha_end=5, alpha_step=0.01, dt=0.001, ndim=None, kind=None, unitID=None, output_df=True):
+def optimize_window_MISE(Spikes, Time, nIter=100, ws_start=0.1, ws_end=None, ws_step=0.1):
+    """
+    optimize_alpha is used to optimize alpha for BAKS from a 1D array of real spiking data.
+    it uses the real data to generate a simulated spike array with known rate,
+    then uses that to generate a BAKS-estimated rate,
+    then getMISE to calculate the MISE between the known rate and the BAKS-estimated rate,
+    and repeats this over a range of alpha values to find the alpha value with the lowest MISE.
+    :param Spikes: 1D spike train from real data
+    :param Time: time array corresponding to Spikes
+    :param nIter: how many iterations to run
+    :param alpha_start: minimum alpha value to test.
+    :param alpha_end: maximum alpha value to test.
+    :param alpha_step: step size for alpha values.
+    :return: df: pandas dataframe with iternums, MISEs, and alphas
+    :return: best_alpha: alpha value with lowest MISE
+    """
+
+    if ws_end is None:
+        ws_end = Time[0,-1] - Time[0,0]
+
+    dt = Time[0,1] - Time[0,0]
+    window_range = np.arange(ws_start, ws_end, ws_step)
+
+    iternums = []
+    MISEs = []
+    windows = []
+    likelihoods = []
+
+    for i in range(nIter):
+        sim_spikes, sim_rate, sim_time = spikearray_poissonsim(Spikes, Time)
+        for j, ss in enumerate(sim_spikes):
+            sr = sim_rate[j,:]
+            for ws in window_range:
+                rolling_rate = rolling_window(ss, dt, ws)
+                lh = 0#firingrate_loglike(sim_spikes, rolling_rate)
+                MISE = getMISE(sr, rolling_rate, dt)
+                iternums.append(i)
+                MISEs.append(MISE)
+                windows.append(ws)
+                likelihoods.append(lh)
+
+    # make a pandas table with iternums, MISEs, and alphas
+    df = pd.DataFrame({'iteration': iternums, 'MISE': MISEs, 'window_size': windows})
+    df_avg = df.groupby('window_size').mean()
+    # get alpha value with lowest MISE
+    best_window = df_avg['MISE'].idxmin()
+    if df_avg['MISE'].iloc[-1] == best_window:
+        print("Warning: lowest MISE is at the end of the range of alpha values tested. "
+              "Consider increasing alpha_end.")
+
+    return df, best_window
+
+def binArrBAKS(spikearr, time, a=4):
+    spiketimes = extract_spike_times(spikearr, time)
+    BAKSrate, h = BAKS(spiketimes, time, a)
+    return BAKSrate, h
+
+def get_optimized_BAKSrates_MISE(Spikes, Time, nIter=10):
+    df, best_alpha = optimize_alpha_MISE(Spikes, Time, nIter)
+    if Spikes.ndim > 1:
+        BAKSrate = np.zeros(Spikes.shape)
+        hlist = []
+        for i, spks in enumerate(Spikes):
+            BAKSrate[i,:], h = binArrBAKS(spks, Time[i,:], a=best_alpha)
+            hlist.append(h)
+        h = np.array(hlist)
+    else:
+        BAKSrate, h = binArrBAKS(Spikes, Time)
+    return BAKSrate, h, best_alpha
+
+def get_optimized_rolling_rates_MISE(Spikes, Time, nIter=10):
+    df, best_window_size = optimize_window_MISE(Spikes, Time, nIter)
+    if Spikes.ndim == 2:
+        dt = Time[0, 1] - Time[0, 0]
+    else:
+        dt = Time[1] - Time[0]
+
+    winAvg = rolling_window(Spikes, dt, best_window_size)
+    ll = 0#firingrate_loglike(Spikes, winAvg)
+
+    return winAvg, ll, best_window_size
+
+def plot_MISE_v_alpha(df, best_alpha):
+    """
+    plot_MISE_v_alpha is used to plot the MISE values from optimize_alpha
+    :param df: pandas dataframe from optimize_alpha
+    :return: plot
+    """
+    sns.lineplot(data=df, x='alpha', y='MISE')
+    # plot a vertical line at best_alpha
+    plt.axvline(x=best_alpha, color='r', linestyle='--')
+    plt.show()
+
+def parallel_apply(Spikes, Time, func, n_jobs=-1):
+    results = Parallel(n_jobs=n_jobs)(delayed(func)(x, y) for x, y in zip(Spikes, Time))
+    return pd.Series(results)
+
+# def dfBAKS(df, spikes_col, time_col, idxcols=None, n_jobs=-1):
+#     """
+#     dfBAKS is used to apply BAKS to a pandas dataframe of spike trains
+#     :param df: pandas dataframe
+#     :param spikes_col: name of column containing spike trains
+#     :param time_col: name of column containing time arrays
+#     :param idxcols: list of column names to use as index for the output dataframe
+#     :return: df: pandas dataframe with BAKSrate column added
+#     """
+#     df = df.copy().reset_index(drop=True)
+#     full_df = []
+#     best_df = []
+#
+#     if n_jobs == 0:
+#
+#         for key, group in df.groupby(idxcols):
+#             res_df, fr, alpha = optimize_alpha_MLE(group[spikes_col], group[time_col])
+#             res_df[idxcols] = key
+#             full_df.append(res_df)
+#             best_df.append(res_df.loc[res_df['alpha'] == alpha])
+#
+#     else:
+#         results = Parallel(n_jobs=n_jobs)(
+#             delayed(optimize_alpha_MLE)(group[spikes_col], group[time_col], unitID=key) for key, group in
+#             df.groupby(idxcols))
+#
+#         for res_df, fr, best_alpha in results:
+#             #res_df[idxcols] = key
+#             print(best_alpha)
+#             full_df.append(res_df)
+#             best_df.append(res_df.loc[res_df['alpha'] == best_alpha])
+#
+#     full_df = pd.concat(full_df).reset_index(drop=True)
+#     best_df = pd.concat(best_df).reset_index(drop=True)
+#     df = df.reset_index(drop=True)
+#     df[['BAKSrate', 'bandwidth', 'log_likelihood', 'alpha']] = best_df[
+#         ['BAKSrate', 'bandwidth', 'log_likelihood', 'alpha']]
+#         # retrieve the rows of full_df, where for each  alpha == best_alpha for each idxcol
+#
+#     return full_df, df
+
+
+def optimize_alpha_MLE_deprecated(Spikes, Time, alpha_start=0.01, alpha_end=5, alpha_step=0.01, dt=0.001, ndim=None, kind=None, unitID=None, output_df=True):
     # generate alphas to be optimized over
     alpha_range = np.arange(alpha_start, alpha_end, alpha_step)
     df = None
@@ -272,7 +413,7 @@ def optimize_alpha_MLE(Spikes, Time, alpha_start=0.01, alpha_end=5, alpha_step=0
         spiketimes = extract_spike_times(spk, tm)
         for a in alpha_range:
             BAKSrate, h, = BAKS(spiketimes, tm, a)
-            ll = firingrate_loglike(spk, BAKSrate)
+            ll = 0#firingrate_loglike(spk, BAKSrate)
             alphas.append(a)
             loglikes.append(ll)
             FiringRates.append(BAKSrate)
@@ -336,7 +477,7 @@ def optimize_alpha_MLE(Spikes, Time, alpha_start=0.01, alpha_end=5, alpha_step=0
         del df
         return best_FiringRate, best_alpha
 
-def optimize_window_MLE(Spikes, Time, ws_start=0.1, ws_end=5, ws_step=0.1):
+def optimize_window_MLE_deprecated(Spikes, Time, ws_start=0.1, ws_end=5, ws_step=0.1):
     ws_range = np.arange(ws_start, ws_end, ws_step)
 
     dt = Time[1] - Time[0]
@@ -345,7 +486,7 @@ def optimize_window_MLE(Spikes, Time, ws_start=0.1, ws_end=5, ws_step=0.1):
 
     for ws in ws_range:
         winAvg = rolling_window(Spikes, dt, ws)
-        ll = firingrate_loglike(Spikes, winAvg)
+        ll = 0#firingrate_loglike(Spikes, winAvg)
         loglikes.append(ll)
         FiringRates.append(winAvg)
 
@@ -354,231 +495,3 @@ def optimize_window_MLE(Spikes, Time, ws_start=0.1, ws_end=5, ws_step=0.1):
     best_window_size = df['window_size'].iloc[bestidx]
     best_FiringRate = FiringRates[bestidx]
     return df, best_window_size, best_FiringRate
-
-
-def optimize_window_MISE(Spikes, Time, nIter=100, ws_start=0.1, ws_end=None, ws_step=0.1):
-    """
-    optimize_alpha is used to optimize alpha for BAKS from a 1D array of real spiking data.
-    it uses the real data to generate a simulated spike array with known rate,
-    then uses that to generate a BAKS-estimated rate,
-    then getMISE to calculate the MISE between the known rate and the BAKS-estimated rate,
-    and repeats this over a range of alpha values to find the alpha value with the lowest MISE.
-    :param Spikes: 1D spike train from real data
-    :param Time: time array corresponding to Spikes
-    :param nIter: how many iterations to run
-    :param alpha_start: minimum alpha value to test.
-    :param alpha_end: maximum alpha value to test.
-    :param alpha_step: step size for alpha values.
-    :return: df: pandas dataframe with iternums, MISEs, and alphas
-    :return: best_alpha: alpha value with lowest MISE
-    """
-
-    if Spikes.ndim == 2:
-        Spikes = Spikes.flatten()
-        Time = Time.flatten()
-
-    if ws_end is None:
-        ws_end = Time[-1] - Time[0]
-
-    dt = Time[1] - Time[0]
-    window_range = np.arange(ws_start, ws_end, ws_step)
-
-    iternums = []
-    MISEs = []
-    windows = []
-    likelihoods = []
-
-    for iter in range(nIter):
-        sim_spikes, sim_rate, sim_time = spikearray_poissonsim(Spikes, Time)
-        sim_spikes = sim_spikes.flatten()
-        sim_rate = sim_rate.flatten()
-        sim_time = sim_time.flatten()
-
-        for ws in window_range:
-            rolling_rate = rolling_window(sim_spikes, dt, ws)
-            lh = firingrate_loglike(sim_spikes, rolling_rate)
-            MISE = getMISE(sim_rate, rolling_rate, dt)
-            iternums.append(iter)
-            MISEs.append(MISE)
-            windows.append(ws)
-            likelihoods.append(lh)
-
-    # make a pandas table with iternums, MISEs, and alphas
-    df = pd.DataFrame({'iteration': iternums, 'MISE': MISEs, 'window_size': windows})
-    df_avg = df.groupby('window_size').mean()
-    # get alpha value with lowest MISE
-    best_window = df_avg['MISE'].idxmin()
-    if df_avg['MISE'].iloc[-1] == best_window:
-        print("Warning: lowest MISE is at the end of the range of alpha values tested. "
-              "Consider increasing alpha_end.")
-
-    return df, best_window
-
-
-def get_optimized_BAKSrates_MISE(Spikes, Time, nIter=10):
-    df, best_alpha = optimize_alpha_MISE(Spikes, Time, nIter)
-    SpikeTimes = extract_spike_times(Spikes, Time)
-    BAKSrate, h = BAKS(SpikeTimes, Time, a=best_alpha)
-
-    return BAKSrate, h, best_alpha
-
-
-def get_optimized_rolling_rates_MISE(Spikes, Time, nIter=10):
-    df, best_window_size = optimize_window_MISE(Spikes, Time, nIter)
-    if Spikes.ndim == 2:
-        dt = Time[0, 1] - Time[0, 0]
-    else:
-        dt = Time[1] - Time[0]
-
-    winAvg = rolling_window(Spikes, dt, best_window_size)
-    ll = firingrate_loglike(Spikes, winAvg)
-
-    return winAvg, ll, best_window_size
-
-
-def plot_MISE_v_alpha(df, best_alpha):
-    """
-    plot_MISE_v_alpha is used to plot the MISE values from optimize_alpha
-    :param df: pandas dataframe from optimize_alpha
-    :return: plot
-    """
-    sns.lineplot(data=df, x='alpha', y='MISE')
-    # plot a vertical line at best_alpha
-    plt.axvline(x=best_alpha, color='r', linestyle='--')
-    plt.show()
-
-
-def plot_spike_train_vs_BAKS_vs_rolling(Spikes, TrueRate, BAKSrate, winAvg, Time):
-    """
-    plot_spike_train_vs_BAKS is used to plot the spike train vs. the BAKS-estimated rate
-    :param SpikeTimes: spike times from real data
-    :param Time: time array corresponding to SpikeTimes
-    :param BAKSrate: BAKS-estimated rate
-    :return: plot
-    """
-    # make a tiled plot, upper tile is spike train, lower tile is BAKS-estimated rate
-    fig, (ax1, ax2, ax3, ax4) = plt.subplots(4, 1, sharex=True)
-    ax1.plot(Time, Spikes)
-    ax2.plot(Time, TrueRate)
-    ax3.plot(Time, BAKSrate)
-    ax4.plot(Time, winAvg)
-    plt.show()
-
-
-def parallel_apply(Spikes, Time, func, n_jobs=-1):
-    results = Parallel(n_jobs=n_jobs)(delayed(func)(x, y) for x, y in zip(Spikes, Time))
-    return pd.Series(results)
-
-
-def dfBAKS(df, spikes_col, time_col, idxcols=None, n_jobs=-1):
-    """
-    dfBAKS is used to apply BAKS to a pandas dataframe of spike trains
-    :param df: pandas dataframe
-    :param spikes_col: name of column containing spike trains
-    :param time_col: name of column containing time arrays
-    :param idxcols: list of column names to use as index for the output dataframe
-    :return: df: pandas dataframe with BAKSrate column added
-    """
-    df = df.copy().reset_index(drop=True)
-    full_df = []
-    best_df = []
-    
-    if n_jobs == 0:
-
-        for key, group in df.groupby(idxcols):
-            res_df, fr, alpha = optimize_alpha_MLE(group[spikes_col], group[time_col])
-            res_df[idxcols] = key
-            full_df.append(res_df)
-            best_df.append(res_df.loc[res_df['alpha'] == alpha])
-
-    else:
-        results = Parallel(n_jobs=n_jobs)(
-            delayed(optimize_alpha_MLE)(group[spikes_col], group[time_col], unitID=key) for key, group in
-            df.groupby(idxcols))
-
-        for res_df, fr, best_alpha in results:
-            #res_df[idxcols] = key
-            print(best_alpha)
-            full_df.append(res_df)
-            best_df.append(res_df.loc[res_df['alpha'] == best_alpha])
-
-    full_df = pd.concat(full_df).reset_index(drop=True)
-    best_df = pd.concat(best_df).reset_index(drop=True)
-    df = df.reset_index(drop=True)
-    df[['BAKSrate', 'bandwidth', 'log_likelihood', 'alpha']] = best_df[
-        ['BAKSrate', 'bandwidth', 'log_likelihood', 'alpha']]
-        # retrieve the rows of full_df, where for each  alpha == best_alpha for each idxcol
-
-    return full_df, df
-
-
-def autoBAKS(Spikes, Time, ndim=None, unit_index=None):
-    """
-    autoBAKS is used to automatically optimize BAKS parameter alpha and generate BAKS-smoothed firing rates
-    for various types of input data. As long as Spikes and Time are the same data type and size and of a supported data
-    type, autoBAKS will return a BAKS-smoothed firing rate.
-    Both Spikes and time can be:
-    (1D) a list, a pandas series, or a numpy array.
-    (2D) a list of arrays, a pandas series of arrays, or a 2D numpy array.
-    :param Spikes: must be contain binary emissions (spikes)
-    :param Time: must contain time values corresponding to Spikes
-    :return: BAKSrate: BAKS-smoothed firing rate
-    """
-
-    # detect if Spikes is a list of arrays, a series, or a single array
-    if unit_index is not None:
-        if ndim == 1:
-            raise ValueError("ndim must be 2 or None if unit_index is not None,"
-                             "since unit_index implies existence of multiple units")
-
-        df = pd.DataFrame({'Spikes': Spikes, 'Time': Time, 'unitID': unit_index})
-        df = dfBAKS(df, 'Spikes', 'Time', 'unitID')
-        return df['BAKSrate']
-
-    elif ndim is None:
-        if isinstance(Spikes, list):
-            # detect is Spikes contains binary data. if not, raise error
-            if not np.all(np.isin(Spikes, [0, 1])):
-                raise ValueError("Spikes must be a binary array of spike emissions")
-
-            print("Spikes is a list")
-            if isinstance(Spikes, list) and all(isinstance(item, np.ndarray) for item in Spikes):
-                print("Spikes is a list of arrays")
-                print("warning, autoBAKS on a list of arrays is not yet well-tested.")
-                ndim = 2
-            else:
-                print("Spikes is a list of non-arrays")
-                print("warning, autoBAKS on a list of non-arrays is not yet well-tested.")
-                ndim = 1
-
-        elif isinstance(Spikes, pd.Series):
-            print("Spikes is a pandas series")
-            # detect if series is a list of arrays or a single array
-            if isinstance(Spikes.iloc[0], np.ndarray):
-                print("Spikes is a series of arrays, parallelizing")
-                ndim = 2
-            else:
-                ndim = 1
-        elif isinstance(Spikes, np.ndarray):
-            print("Spikes is an array")
-            if Spikes.ndim == 2:
-                print("Spikes is a 2D array, parallelizing")
-                print("warning, autoBAKS on a 2D array is not yet tested.")
-                ndim = 2
-            elif Spikes.ndim == 1:
-                print("Spikes is a 1D array")
-                ndim = 1
-            else:
-                print("Spikes is > 2 dimensions, only 1 and 2D arrays are supported")
-                return None
-        else:
-            print("Spikes datatype not recognized. Please use a list, pandas series, or numpy array.")
-            return None
-
-    if ndim == 1:
-        _, _, BAKSrate = optimize_alpha_MLE(Spikes, Time)
-        return BAKSrate
-    elif ndim == 2:
-        results = parallel_apply(Spikes, Time, optimize_alpha_MLE, n_jobs=-1)
-        _, _, BAKSrate = zip(*results)
-        return BAKSrate
