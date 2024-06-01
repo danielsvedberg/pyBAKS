@@ -148,9 +148,11 @@ def test_sim_data():
     fig, axs = plt.subplots(1, 1, figsize=(6, 4))
     sns.lineplot(x=alpha, y=MISE, ax=axs)
     axs.axvline(x=best_alpha, color='red', linestyle='--')
-    title = "pyBAKS: MISE vs Alpha\nBest Alpha: " + str(best_alpha) + ", MISE: " + str(best_MISE)
+    nm = "pyBAKS: MISE vs Alpha\nBest Alpha: "
+    title = nm + str(best_alpha) + ", MISE: " + str(best_MISE)
     plt.title(title)
     plt.show()
+    plt.savefig(save_dir + "pyBAKS_MISE_vs_alpha.png")
 
     BAKSrate_MISE, h, ba_MISE = pyBAKS.get_optimized_BAKSrates_MISE(spikearr, timearr, nIter=10)
     BAKSMISE = pyBAKS.getMISE(ratearr, BAKSrate_MISE)
